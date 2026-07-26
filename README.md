@@ -64,6 +64,8 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `country`: country code for price data
 - `euroApproximation.myrToEurRate`: MYR to EUR approximation used inside each `price.euroApproximation`
 - `language`: language for store details
+- `requestPacing`: minimum delay between fresh Steam requests per endpoint
+- `retry`: retry/backoff settings for 429 and temporary Steam failures
 - `progress`: print progress messages to stderr
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
 - `outputFile`: result file path, or `null` for stdout
@@ -81,4 +83,4 @@ Cache files are written under `.cache/steam`.
 
 Existing output files are never overwritten. If `steam-games.json` exists, the script writes `steam-games-1.json`, then `steam-games-2.json`, and so on.
 
-Steam may throttle app detail requests when scanning many pages; throttled candidates are reported in `warnings`.
+Steam may throttle app detail requests when scanning many pages. The script spaces fresh requests, retries 429 responses with backoff, and reports any candidates that still fail in `warnings`. If that happens, wait a bit and run `pnpm run games` again; cached successful requests are reused, so reruns mostly fill the missing app details.

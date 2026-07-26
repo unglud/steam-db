@@ -31,6 +31,8 @@ type RuntimeConfig = {
   country: string;
   language: string;
   euroApproximation: EuroApproximationConfig;
+  requestPacing: RequestPacingConfig;
+  retry: RetryConfig;
   outputMode: OutputMode;
   outputFile: string | null;
   progress: boolean;
@@ -56,6 +58,18 @@ type ScriptConfig = RuntimeConfig & {
 
 type EuroApproximationConfig = {
   myrToEurRate: number;
+};
+
+type RequestPacingConfig = {
+  searchDelayMs: number;
+  appDetailsDelayMs: number;
+  reviewSummaryDelayMs: number;
+};
+
+type RetryConfig = {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
 };
 
 type CacheConfig = {
@@ -145,6 +159,8 @@ type ReviewResponse = {
   query_summary?: ReviewSummary;
 };
 
+type RequestNamespace = "search" | "appdetails" | "reviews";
+
 type Candidate = {
   appid: number;
   name?: string;
@@ -213,11 +229,21 @@ const SCRIPT_CONFIG: ScriptConfig = {
   euroApproximation: {
     myrToEurRate: 0.2145,
   },
+  requestPacing: {
+    searchDelayMs: 1000,
+    appDetailsDelayMs: 1500,
+    reviewSummaryDelayMs: 500,
+  },
+  retry: {
+    maxAttempts: 8,
+    baseDelayMs: 3000,
+    maxDelayMs: 120000,
+  },
   start: 0,
   pages: null,
   limit: null,
   maxCandidates: null,
-  concurrency: 2,
+  concurrency: 1,
   outputMode: "json",
   outputFile: "steam-games.json",
   progress: true,
@@ -244,6 +270,8 @@ const SCRIPT_CONFIG: ScriptConfig = {
 
 const USER_AGENT = "steam-db-ts-script/0.1 (+https://store.steampowered.com)";
 const SEARCH_PAGE_SIZE = 50;
+const requestQueues = new Map<RequestNamespace, Promise<void>>();
+const lastRequestAt = new Map<RequestNamespace, number>();
 const DETAIL_FILTERS = [
   "price_overview",
   "short_description",
@@ -302,8 +330,11 @@ async function main(): Promise<void> {
     });
 
     if (skippedCandidates.length > 0) {
+      const rateLimitHint = skippedCandidates.some((error) => error.includes("429 Too Many Requests"))
+        ? " Steam rate-limited the crawl; wait a bit and rerun `pnpm run games`. Cached successful requests will be reused, so reruns mostly fill the missing app details."
+        : "";
       warnings.push(
-        `Skipped ${skippedCandidates.length} candidate(s) after Steam request failures. First errors: ${skippedCandidates
+        `Skipped ${skippedCandidates.length} candidate(s) after repeated Steam request failures.${rateLimitHint} First errors: ${skippedCandidates
           .slice(0, 3)
           .join(" | ")}`
       );
@@ -445,6 +476,24 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (!isPositiveNumber(config.euroApproximation.myrToEurRate)) {
     throw new Error("SCRIPT_CONFIG.euroApproximation.myrToEurRate must be a positive number.");
   }
+  if (!isNonNegativeNumber(config.requestPacing.searchDelayMs)) {
+    throw new Error("SCRIPT_CONFIG.requestPacing.searchDelayMs must be zero or a positive number.");
+  }
+  if (!isNonNegativeNumber(config.requestPacing.appDetailsDelayMs)) {
+    throw new Error("SCRIPT_CONFIG.requestPacing.appDetailsDelayMs must be zero or a positive number.");
+  }
+  if (!isNonNegativeNumber(config.requestPacing.reviewSummaryDelayMs)) {
+    throw new Error("SCRIPT_CONFIG.requestPacing.reviewSummaryDelayMs must be zero or a positive number.");
+  }
+  if (!Number.isInteger(config.retry.maxAttempts) || config.retry.maxAttempts < 1) {
+    throw new Error("SCRIPT_CONFIG.retry.maxAttempts must be a positive integer.");
+  }
+  if (!isNonNegativeNumber(config.retry.baseDelayMs)) {
+    throw new Error("SCRIPT_CONFIG.retry.baseDelayMs must be zero or a positive number.");
+  }
+  if (!isPositiveNumber(config.retry.maxDelayMs)) {
+    throw new Error("SCRIPT_CONFIG.retry.maxDelayMs must be a positive number.");
+  }
 
   return {
     limit: config.limit,
@@ -455,6 +504,8 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     country: config.country.toUpperCase(),
     language: config.language,
     euroApproximation: config.euroApproximation,
+    requestPacing: config.requestPacing,
+    retry: config.retry,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
@@ -464,6 +515,10 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
 
 function isPositiveNumber(value: number): boolean {
   return Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeNumber(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
 }
 
 function normalizeFilters(config: EditableFilters): Filters {
@@ -562,7 +617,7 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       "search",
       url.toString(),
       hoursToMs(config.cache.searchTtlHours),
-      () => fetchJson<SearchResponse>(url)
+      () => fetchJson<SearchResponse>(url, config)
     );
     const items = response.items ?? [];
     if (items.length === 0) break;
@@ -684,7 +739,7 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
     "appdetails",
     url.toString(),
     hoursToMs(config.cache.appDetailsTtlHours),
-    () => fetchJson<AppDetailsResponse>(url)
+    () => fetchJson<AppDetailsResponse>(url, config)
   );
   const app = response[String(appid)];
   if (!app?.success || !app.data) return null;
@@ -704,19 +759,22 @@ async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise
     "reviews",
     url.toString(),
     hoursToMs(config.cache.reviewSummaryTtlHours),
-    () => fetchJson<ReviewResponse>(url)
+    () => fetchJson<ReviewResponse>(url, config)
   );
   return response.query_summary ?? {};
 }
 
 async function fetchCachedJson<T>(
   config: RuntimeConfig,
-  namespace: "search" | "appdetails" | "reviews",
+  namespace: RequestNamespace,
   key: string,
   ttlMs: number,
   loadFresh: () => Promise<T>
 ): Promise<T> {
-  if (!config.cache.enabled) return loadFresh();
+  if (!config.cache.enabled) {
+    await waitForRequestSlot(namespace, config);
+    return loadFresh();
+  }
 
   const filePath = await cacheFilePath(config, namespace, key);
   const cached = await readCache<T>(filePath);
@@ -725,6 +783,7 @@ async function fetchCachedJson<T>(
     return cached.data;
   }
 
+  await waitForRequestSlot(namespace, config);
   const data = await loadFresh();
   await writeCache(filePath, {
     createdAt: now,
@@ -733,6 +792,28 @@ async function fetchCachedJson<T>(
     data,
   });
   return data;
+}
+
+async function waitForRequestSlot(namespace: RequestNamespace, config: RuntimeConfig): Promise<void> {
+  const delayMs = requestDelayMs(namespace, config);
+  if (delayMs <= 0) return;
+
+  const previous = requestQueues.get(namespace) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    const previousRequestAt = lastRequestAt.get(namespace) ?? 0;
+    const waitMs = Math.max(0, previousRequestAt + delayMs - Date.now());
+    if (waitMs > 0) await sleep(waitMs);
+    lastRequestAt.set(namespace, Date.now());
+  });
+
+  requestQueues.set(namespace, next);
+  await next;
+}
+
+function requestDelayMs(namespace: RequestNamespace, config: RuntimeConfig): number {
+  if (namespace === "search") return config.requestPacing.searchDelayMs;
+  if (namespace === "appdetails") return config.requestPacing.appDetailsDelayMs;
+  return config.requestPacing.reviewSummaryDelayMs;
 }
 
 type CacheEntry<T> = {
@@ -773,19 +854,39 @@ function hoursToMs(hours: number): number {
   return hours * 60 * 60 * 1000;
 }
 
-async function fetchJson<T>(url: URL, attempt = 0): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "application/json",
-    },
-  });
+async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/json",
+      },
+    });
+  } catch (error) {
+    if (attempt + 1 < config.retry.maxAttempts) {
+      const delayMs = retryDelayMs(null, attempt, config.retry);
+      logProgress(
+        config,
+        `Steam request failed before response; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
+      );
+      await sleep(delayMs);
+      return fetchJson<T>(url, config, attempt + 1);
+    }
+
+    throw error;
+  }
 
   if (!response.ok) {
     const body = await response.text();
-    if (shouldRetry(response.status) && attempt < 1) {
-      await sleep(retryDelayMs(response, attempt));
-      return fetchJson<T>(url, attempt + 1);
+    if (shouldRetry(response.status) && attempt + 1 < config.retry.maxAttempts) {
+      const delayMs = retryDelayMs(response, attempt, config.retry);
+      logProgress(
+        config,
+        `Steam request returned ${response.status}; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
+      );
+      await sleep(delayMs);
+      return fetchJson<T>(url, config, attempt + 1);
     }
 
     throw new Error(`Steam request failed: ${response.status} ${response.statusText} ${redactUrl(url)}\n${body.slice(0, 300)}`);
@@ -798,18 +899,25 @@ function shouldRetry(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-function retryDelayMs(response: Response, attempt: number): number {
-  const retryAfter = response.headers.get("retry-after");
+function retryDelayMs(response: Response | null, attempt: number, config: RetryConfig): number {
+  const retryAfter = response?.headers.get("retry-after");
   const retryAfterSeconds = retryAfter ? Number.parseInt(retryAfter, 10) : NaN;
   if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    return Math.min(retryAfterSeconds * 1000, 30000);
+    return Math.min(retryAfterSeconds * 1000, config.maxDelayMs);
   }
 
-  return [1500, 3500, 7000][attempt] ?? 7000;
+  const exponentialDelay = config.baseDelayMs * 2 ** attempt;
+  const jitter = Math.floor(Math.random() * Math.min(1000, Math.max(1, config.baseDelayMs)));
+  return Math.min(exponentialDelay + jitter, config.maxDelayMs);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${Math.round(ms / 1000)}s`;
 }
 
 function redactUrl(url: URL): string {
@@ -950,6 +1058,8 @@ function serializableOptions(config: RuntimeConfig) {
     country: config.country,
     language: config.language,
     euroApproximation: config.euroApproximation,
+    requestPacing: config.requestPacing,
+    retry: config.retry,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
