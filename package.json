@@ -5,7 +5,8 @@
   "packageManager": "pnpm@11.9.0",
   "type": "module",
   "scripts": {
-    "games": "node --env-file=.env src/steam-games.ts"
+    "games": "node --env-file=.env src/steam-games.ts",
+    "test": "node --test test/*.test.ts"
   },
   "devEngines": {
     "runtime": {

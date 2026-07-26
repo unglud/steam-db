@@ -5,6 +5,7 @@ Fetch Steam games as JSON using public Steam endpoints and filters shaped like t
 ```sh
 pnpm install
 pnpm run games
+pnpm test
 ```
 
 This project pins Node through pnpm, so `pnpm install` downloads the project runtime if your shell does not have `node`.

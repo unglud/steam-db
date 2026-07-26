@@ -1,12 +1,15 @@
+import { pathToFileURL } from "node:url";
+
 declare const process: {
+  argv: string[];
   env: Record<string, string | undefined>;
   exitCode?: number;
   stdout: { write(chunk: string): void };
   stderr: { write(chunk: string): void };
 };
 
-type OutputMode = "json" | "ndjson";
-type SortKey =
+export type OutputMode = "json" | "ndjson";
+export type SortKey =
   | "discount_asc"
   | "discount_desc"
   | "rating_asc"
@@ -21,9 +24,9 @@ type SortKey =
   | "price_asc"
   | "price_desc";
 
-type PlatformName = "win" | "mac" | "linux" | "applesilicon" | "";
+export type PlatformName = "win" | "mac" | "linux" | "applesilicon" | "";
 
-type RuntimeConfig = {
+export type RuntimeConfig = {
   limit: number | null;
   pages: number | null;
   maxCandidates: number | null;
@@ -42,7 +45,7 @@ type RuntimeConfig = {
   cache: CacheConfig;
 };
 
-type EditableFilters = {
+export type EditableFilters = {
   displayOnly: string;
   minDiscount: number;
   minRating: number;
@@ -56,32 +59,32 @@ type EditableFilters = {
   term: string;
 };
 
-type ScriptConfig = RuntimeConfig & {
+export type ScriptConfig = RuntimeConfig & {
   filters: EditableFilters;
 };
 
-type EuroApproximationConfig = {
+export type EuroApproximationConfig = {
   myrToEurRate: number;
 };
 
-type RequestPacingConfig = {
+export type RequestPacingConfig = {
   searchDelayMs: number;
   appDetailsDelayMs: number;
   reviewSummaryDelayMs: number;
 };
 
-type RetryConfig = {
+export type RetryConfig = {
   maxAttempts: number;
   baseDelayMs: number;
   maxDelayMs: number;
 };
 
-type OutputRetentionConfig = {
+export type OutputRetentionConfig = {
   enabled: boolean;
   keepLast: number;
 };
 
-type CacheConfig = {
+export type CacheConfig = {
   enabled: boolean;
   directory: string;
   cleanupExpired: boolean;
@@ -91,13 +94,13 @@ type CacheConfig = {
   reviewSummaryTtlHours: number;
 };
 
-type OutputWriter = {
+export type OutputWriter = {
   path: string | null;
   write(chunk: string): Promise<void>;
   close(): Promise<void>;
 };
 
-type Filters = {
+export type Filters = {
   displayOnly: string;
   minDiscount: number;
   minRating: number;
@@ -113,16 +116,16 @@ type Filters = {
   term: string;
 };
 
-type SearchItem = {
+export type SearchItem = {
   name?: string;
   logo?: string;
 };
 
-type SearchResponse = {
+export type SearchResponse = {
   items?: SearchItem[];
 };
 
-type PriceOverview = {
+export type PriceOverview = {
   currency?: string;
   initial?: number;
   final?: number;
@@ -131,7 +134,7 @@ type PriceOverview = {
   final_formatted?: string;
 };
 
-type StoreDetails = {
+export type StoreDetails = {
   name?: string;
   steam_appid?: number;
   short_description?: string;
@@ -149,7 +152,7 @@ type StoreDetails = {
   genres?: Array<{ id?: string; description?: string }>;
 };
 
-type AppDetailsResponse = Record<
+export type AppDetailsResponse = Record<
   string,
   {
     success?: boolean;
@@ -157,7 +160,7 @@ type AppDetailsResponse = Record<
   }
 >;
 
-type ReviewSummary = {
+export type ReviewSummary = {
   review_score?: number;
   review_score_desc?: string;
   total_positive?: number;
@@ -165,19 +168,19 @@ type ReviewSummary = {
   total_reviews?: number;
 };
 
-type ReviewResponse = {
+export type ReviewResponse = {
   success?: number;
   query_summary?: ReviewSummary;
 };
 
-type RequestNamespace = "search" | "appdetails" | "reviews" | "demopage";
+export type RequestNamespace = "search" | "appdetails" | "reviews" | "demopage";
 
-type Candidate = {
+export type Candidate = {
   appid: number;
   name?: string;
 };
 
-type GamePrice = {
+export type GamePrice = {
   currency: string | null;
   initial: number | null;
   final: number | null;
@@ -187,7 +190,7 @@ type GamePrice = {
   euroApproximation: GamePriceEuroApproximation;
 };
 
-type GamePriceEuroApproximation = {
+export type GamePriceEuroApproximation = {
   currency: "EUR";
   sourceCurrency: string | null;
   sourceToEurRate: number;
@@ -197,7 +200,7 @@ type GamePriceEuroApproximation = {
   finalFormatted: string | null;
 };
 
-type GameReviews = {
+export type GameReviews = {
   score: number | null;
   scoreDescription: string | null;
   total: number;
@@ -206,12 +209,12 @@ type GameReviews = {
   positivePercent: number | null;
 };
 
-type GameGenre = {
+export type GameGenre = {
   id: string | null;
   description: string | null;
 };
 
-type GameResult = {
+export type GameResult = {
   appid: number;
   name: string;
   steamUrl: string;
@@ -231,13 +234,13 @@ type GameResult = {
   };
 };
 
-type SerializableGamePrice = {
+export type SerializableGamePrice = {
   discountPercent: number;
   finalFormatted: string | null;
   finalEuroFormatted: string | null;
 };
 
-type SerializableGameResult = {
+export type SerializableGameResult = {
   appid: number;
   name: string;
   steamUrl: string;
@@ -249,13 +252,21 @@ type SerializableGameResult = {
   genres: GameGenre[];
 };
 
-type FilterDecision = {
+export type FilterDecision = {
   matched: boolean;
   reason: string | null;
 };
 
+export type FetchFunction = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+export type SteamGamesDependencies = {
+  fetch: FetchFunction;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+};
+
 // Edit this block to change what `pnpm run games` returns.
-const SCRIPT_CONFIG: ScriptConfig = {
+export const SCRIPT_CONFIG: ScriptConfig = {
   country: "MY",
   language: process.env.STEAM_LANG ?? "english",
   euroApproximation: {
@@ -321,9 +332,27 @@ const DETAIL_FILTERS = [
   "genres",
 ].join(",");
 
-async function main(): Promise<void> {
-  const config = normalizeRuntimeConfig(SCRIPT_CONFIG);
-  const filters = normalizeFilters(SCRIPT_CONFIG.filters);
+const defaultDependencies: SteamGamesDependencies = {
+  fetch: (input, init) => fetch(input, init),
+  now: () => Date.now(),
+  sleep,
+};
+
+function resolveDependencies(dependencies: Partial<SteamGamesDependencies> = {}): SteamGamesDependencies {
+  return {
+    fetch: dependencies.fetch ?? defaultDependencies.fetch,
+    now: dependencies.now ?? defaultDependencies.now,
+    sleep: dependencies.sleep ?? defaultDependencies.sleep,
+  };
+}
+
+export async function runSteamGames(
+  scriptConfig: ScriptConfig = SCRIPT_CONFIG,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<void> {
+  const deps = resolveDependencies(dependencies);
+  const config = normalizeRuntimeConfig(scriptConfig);
+  const filters = normalizeFilters(scriptConfig.filters);
   const outputWriter = await createOutputWriter(config);
   const warnings: string[] = [];
   let completed = false;
@@ -360,7 +389,7 @@ async function main(): Promise<void> {
       );
     }
 
-    const discoveredCandidates = await fetchSearchCandidates(filters, config);
+    const discoveredCandidates = await fetchSearchCandidates(filters, config, deps);
     const candidates =
       config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
     if (config.maxCandidates !== null && discoveredCandidates.length > candidates.length) {
@@ -376,7 +405,7 @@ async function main(): Promise<void> {
     const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
       try {
         logVerbose(config, `Processing candidate ${candidateLabel(candidate)}.`);
-        const game = await enrichCandidate(candidate, config);
+        const game = await enrichCandidate(candidate, config, deps);
         if (game === null) {
           logVerbose(config, `Candidate ${candidateLabel(candidate)} returned no appdetails data.`);
         } else {
@@ -653,7 +682,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
-function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
+export function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (config.limit !== null && (!Number.isFinite(config.limit) || config.limit < 1)) {
     throw new Error("SCRIPT_CONFIG.limit must be a positive number or null.");
   }
@@ -755,7 +784,7 @@ function isNonNegativeNumber(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
 }
 
-function normalizeFilters(config: EditableFilters): Filters {
+export function normalizeFilters(config: EditableFilters): Filters {
   const minRelease = config.minRelease || "1970-01-01";
   const minReleaseTime = Date.parse(`${minRelease}T00:00:00Z`);
   const ignoreNames = config.ignoreNames.map((name) => name.trim()).filter(Boolean);
@@ -815,7 +844,12 @@ function parseSort(value: string): SortKey {
   throw new Error(`Unsupported sort "${value}". Supported sorts: ${supported.join(", ")}.`);
 }
 
-async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): Promise<Candidate[]> {
+export async function fetchSearchCandidates(
+  filters: Filters,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<Candidate[]> {
+  const deps = resolveDependencies(dependencies);
   const candidates = new Map<number, Candidate>();
   logVerbose(
     config,
@@ -824,35 +858,7 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
 
   for (let page = 0; config.pages === null || page < config.pages; page += 1) {
     const previousCandidateCount = candidates.size;
-    const url = new URL("https://store.steampowered.com/search/results/");
-    url.searchParams.set("json", "1");
-    url.searchParams.set("ignore_preferences", "1");
-    url.searchParams.set("start", String(config.start + page * SEARCH_PAGE_SIZE));
-
-    if (filters.displayOnly.toLowerCase() === "game") {
-      url.searchParams.set("category1", "998");
-    }
-
-    if (filters.minDiscount > 0) {
-      url.searchParams.set("specials", "1");
-    }
-
-    const steamSearchOs = toSteamSearchOs(filters.os);
-    if (steamSearchOs) {
-      url.searchParams.set("os", steamSearchOs);
-    }
-
-    if (filters.includeTags.length > 0) {
-      url.searchParams.set("tags", filters.includeTags.join(","));
-    }
-
-    if (filters.excludeTags.length > 0) {
-      url.searchParams.set("untags", filters.excludeTags.join(","));
-    }
-
-    if (filters.term) {
-      url.searchParams.set("term", filters.term);
-    }
+    const url = buildSearchUrl(filters, config, page);
 
     logVerbose(config, `Requesting search page ${page + 1}: ${redactUrl(url)}.`);
     const response = await fetchCachedJson<SearchResponse>(
@@ -860,7 +866,8 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       "search",
       url.toString(),
       hoursToMs(config.cache.searchTtlHours),
-      () => fetchJson<SearchResponse>(url, config)
+      () => fetchJson<SearchResponse>(url, config, deps),
+      deps
     );
     const items = response.items ?? [];
     logVerbose(config, `Search page ${page + 1} returned ${items.length} item(s).`);
@@ -908,6 +915,40 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
   return [...candidates.values()];
 }
 
+export function buildSearchUrl(filters: Filters, config: RuntimeConfig, page: number): URL {
+  const url = new URL("https://store.steampowered.com/search/results/");
+  url.searchParams.set("json", "1");
+  url.searchParams.set("ignore_preferences", "1");
+  url.searchParams.set("start", String(config.start + page * SEARCH_PAGE_SIZE));
+
+  if (filters.displayOnly.toLowerCase() === "game") {
+    url.searchParams.set("category1", "998");
+  }
+
+  if (filters.minDiscount > 0) {
+    url.searchParams.set("specials", "1");
+  }
+
+  const steamSearchOs = toSteamSearchOs(filters.os);
+  if (steamSearchOs) {
+    url.searchParams.set("os", steamSearchOs);
+  }
+
+  if (filters.includeTags.length > 0) {
+    url.searchParams.set("tags", filters.includeTags.join(","));
+  }
+
+  if (filters.excludeTags.length > 0) {
+    url.searchParams.set("untags", filters.excludeTags.join(","));
+  }
+
+  if (filters.term) {
+    url.searchParams.set("term", filters.term);
+  }
+
+  return url;
+}
+
 function toSteamSearchOs(os: PlatformName): "win" | "mac" | "linux" | null {
   if (os === "applesilicon") return "mac";
   if (os === "win" || os === "mac" || os === "linux") return os;
@@ -922,11 +963,16 @@ function extractAppId(logo: string): number | null {
   return Number.isFinite(appid) ? appid : null;
 }
 
-async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Promise<GameResult | null> {
+export async function enrichCandidate(
+  candidate: Candidate,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<GameResult | null> {
+  const deps = resolveDependencies(dependencies);
   logVerbose(config, `Fetching app details and review summary for ${candidateLabel(candidate)}.`);
   const [details, reviews] = await Promise.all([
-    fetchAppDetails(candidate.appid, config),
-    fetchReviewSummary(candidate.appid, config),
+    fetchAppDetails(candidate.appid, config, deps),
+    fetchReviewSummary(candidate.appid, config, deps),
   ]);
 
   if (!details) {
@@ -938,7 +984,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
   const reviewTotal = reviews.total_reviews ?? 0;
   const positive = reviews.total_positive ?? 0;
   const negative = reviews.total_negative ?? 0;
-  const demoAvailable = await hasAvailableDemo(details, config);
+  const demoAvailable = await hasAvailableDemo(details, config, deps);
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
   const platforms = {
     windows: details.platforms?.windows ?? false,
@@ -985,7 +1031,12 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
   };
 }
 
-async function hasAvailableDemo(details: StoreDetails, config: RuntimeConfig): Promise<boolean> {
+export async function hasAvailableDemo(
+  details: StoreDetails,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<boolean> {
+  const deps = resolveDependencies(dependencies);
   const demos = (details.demos ?? [])
     .map((demo) => demo.appid)
     .filter((appid): appid is number => typeof appid === "number" && Number.isFinite(appid));
@@ -997,7 +1048,7 @@ async function hasAvailableDemo(details: StoreDetails, config: RuntimeConfig): P
   logVerbose(config, `Checking ${demos.length} demo page(s) for ${details.steam_appid ?? details.name ?? "unknown app"}.`);
   for (const demoAppid of demos) {
     try {
-      if (await isDemoPageInstallable(demoAppid, config)) {
+      if (await isDemoPageInstallable(demoAppid, config, deps)) {
         logVerbose(config, `Demo ${demoAppid} is installable.`);
         return true;
       }
@@ -1010,7 +1061,12 @@ async function hasAvailableDemo(details: StoreDetails, config: RuntimeConfig): P
   return false;
 }
 
-async function isDemoPageInstallable(appid: number, config: RuntimeConfig): Promise<boolean> {
+export async function isDemoPageInstallable(
+  appid: number,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<boolean> {
+  const deps = resolveDependencies(dependencies);
   const url = new URL(`https://store.steampowered.com/app/${appid}/`);
   logVerbose(config, `Preparing demo page availability request for ${appid}: ${redactUrl(url)}.`);
 
@@ -1020,13 +1076,14 @@ async function isDemoPageInstallable(appid: number, config: RuntimeConfig): Prom
     url.toString(),
     hoursToMs(config.cache.demoPageTtlHours),
     async () => {
-      const html = await fetchText(url, config);
+      const html = await fetchText(url, config, deps);
       return hasInstallLink(html, appid);
-    }
+    },
+    deps
   );
 }
 
-function serializeGame({
+export function serializeGame({
   appid,
   name,
   steamUrl,
@@ -1050,7 +1107,7 @@ function serializeGame({
   };
 }
 
-function serializePrice(price: GamePrice): SerializableGamePrice {
+export function serializePrice(price: GamePrice): SerializableGamePrice {
   return {
     discountPercent: price.discountPercent,
     finalFormatted: price.finalFormatted,
@@ -1058,7 +1115,12 @@ function serializePrice(price: GamePrice): SerializableGamePrice {
   };
 }
 
-async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<StoreDetails | null> {
+export async function fetchAppDetails(
+  appid: number,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<StoreDetails | null> {
+  const deps = resolveDependencies(dependencies);
   const url = new URL("https://store.steampowered.com/api/appdetails");
   url.searchParams.set("appids", String(appid));
   url.searchParams.set("filters", DETAIL_FILTERS);
@@ -1071,7 +1133,8 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
     "appdetails",
     url.toString(),
     hoursToMs(config.cache.appDetailsTtlHours),
-    () => fetchJson<AppDetailsResponse>(url, config)
+    () => fetchJson<AppDetailsResponse>(url, config, deps),
+    deps
   );
   const app = response[String(appid)];
   if (!app?.success || !app.data) {
@@ -1083,7 +1146,12 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
   return app.data;
 }
 
-async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise<ReviewSummary> {
+export async function fetchReviewSummary(
+  appid: number,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<ReviewSummary> {
+  const deps = resolveDependencies(dependencies);
   const url = new URL(`https://store.steampowered.com/appreviews/${appid}`);
   url.searchParams.set("json", "1");
   url.searchParams.set("language", "all");
@@ -1096,7 +1164,8 @@ async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise
     "reviews",
     url.toString(),
     hoursToMs(config.cache.reviewSummaryTtlHours),
-    () => fetchJson<ReviewResponse>(url, config)
+    () => fetchJson<ReviewResponse>(url, config, deps),
+    deps
   );
   const summary = response.query_summary ?? {};
   logVerbose(
@@ -1111,17 +1180,19 @@ async function fetchCachedJson<T>(
   namespace: RequestNamespace,
   key: string,
   ttlMs: number,
-  loadFresh: () => Promise<T>
+  loadFresh: () => Promise<T>,
+  dependencies: Partial<SteamGamesDependencies> = {}
 ): Promise<T> {
+  const deps = resolveDependencies(dependencies);
   if (!config.cache.enabled) {
     logVerbose(config, `Cache disabled for ${namespace}; fetching ${summarizeCacheKey(key)}.`);
-    await waitForRequestSlot(namespace, config);
+    await waitForRequestSlot(namespace, config, deps);
     return loadFresh();
   }
 
   const filePath = await cacheFilePath(config, namespace, key);
   const cached = await readCache<T>(filePath);
-  const now = Date.now();
+  const now = deps.now();
   if (cached !== null && cached.expiresAt > now) {
     logVerbose(config, `Cache hit for ${namespace}: ${summarizeCacheKey(key)} (expires ${formatTimestamp(cached.expiresAt)}).`);
     return cached.data;
@@ -1132,7 +1203,7 @@ async function fetchCachedJson<T>(
     logVerbose(config, `Cache miss for ${namespace}: ${summarizeCacheKey(key)}.`);
   }
 
-  await waitForRequestSlot(namespace, config);
+  await waitForRequestSlot(namespace, config, deps);
   logVerbose(config, `Fetching fresh ${namespace}: ${summarizeCacheKey(key)}.`);
   const data = await loadFresh();
   await writeCache(filePath, {
@@ -1145,19 +1216,24 @@ async function fetchCachedJson<T>(
   return data;
 }
 
-async function waitForRequestSlot(namespace: RequestNamespace, config: RuntimeConfig): Promise<void> {
+async function waitForRequestSlot(
+  namespace: RequestNamespace,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {}
+): Promise<void> {
+  const deps = resolveDependencies(dependencies);
   const delayMs = requestDelayMs(namespace, config);
   if (delayMs <= 0) return;
 
   const previous = requestQueues.get(namespace) ?? Promise.resolve();
   const next = previous.catch(() => {}).then(async () => {
     const previousRequestAt = lastRequestAt.get(namespace) ?? 0;
-    const waitMs = Math.max(0, previousRequestAt + delayMs - Date.now());
+    const waitMs = Math.max(0, previousRequestAt + delayMs - deps.now());
     if (waitMs > 0) {
       logVerbose(config, `Waiting ${formatDuration(waitMs)} before next fresh ${namespace} request.`);
-      await sleep(waitMs);
+      await deps.sleep(waitMs);
     }
-    lastRequestAt.set(namespace, Date.now());
+    lastRequestAt.set(namespace, deps.now());
   });
 
   requestQueues.set(namespace, next);
@@ -1261,11 +1337,17 @@ function hoursToMs(hours: number): number {
   return hours * 60 * 60 * 1000;
 }
 
-async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promise<T> {
+async function fetchJson<T>(
+  url: URL,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {},
+  attempt = 0
+): Promise<T> {
+  const deps = resolveDependencies(dependencies);
   let response: Response;
   try {
     logVerbose(config, `HTTP GET ${redactUrl(url)} (attempt ${attempt + 1}/${config.retry.maxAttempts}).`);
-    response = await fetch(url, {
+    response = await deps.fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
         Accept: "application/json",
@@ -1278,8 +1360,8 @@ async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promi
         config,
         `Steam request failed before response; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
       );
-      await sleep(delayMs);
-      return fetchJson<T>(url, config, attempt + 1);
+      await deps.sleep(delayMs);
+      return fetchJson<T>(url, config, deps, attempt + 1);
     }
 
     throw error;
@@ -1294,8 +1376,8 @@ async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promi
         config,
         `Steam request returned ${response.status}; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
       );
-      await sleep(delayMs);
-      return fetchJson<T>(url, config, attempt + 1);
+      await deps.sleep(delayMs);
+      return fetchJson<T>(url, config, deps, attempt + 1);
     }
 
     throw new Error(`Steam request failed: ${response.status} ${response.statusText} ${redactUrl(url)}\n${body.slice(0, 300)}`);
@@ -1304,11 +1386,17 @@ async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promi
   return (await response.json()) as T;
 }
 
-async function fetchText(url: URL, config: RuntimeConfig, attempt = 0): Promise<string> {
+async function fetchText(
+  url: URL,
+  config: RuntimeConfig,
+  dependencies: Partial<SteamGamesDependencies> = {},
+  attempt = 0
+): Promise<string> {
+  const deps = resolveDependencies(dependencies);
   let response: Response;
   try {
     logVerbose(config, `HTTP GET ${redactUrl(url)} (attempt ${attempt + 1}/${config.retry.maxAttempts}).`);
-    response = await fetch(url, {
+    response = await deps.fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
         Accept: "text/html,application/xhtml+xml",
@@ -1321,8 +1409,8 @@ async function fetchText(url: URL, config: RuntimeConfig, attempt = 0): Promise<
         config,
         `Steam request failed before response; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
       );
-      await sleep(delayMs);
-      return fetchText(url, config, attempt + 1);
+      await deps.sleep(delayMs);
+      return fetchText(url, config, deps, attempt + 1);
     }
 
     throw error;
@@ -1337,8 +1425,8 @@ async function fetchText(url: URL, config: RuntimeConfig, attempt = 0): Promise<
         config,
         `Steam request returned ${response.status}; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
       );
-      await sleep(delayMs);
-      return fetchText(url, config, attempt + 1);
+      await deps.sleep(delayMs);
+      return fetchText(url, config, deps, attempt + 1);
     }
 
     throw new Error(`Steam request failed: ${response.status} ${response.statusText} ${redactUrl(url)}\n${body.slice(0, 300)}`);
@@ -1388,7 +1476,7 @@ function matchesFilters(game: GameResult, filters: Filters): boolean {
   return filterGame(game, filters).matched;
 }
 
-function filterGame(game: GameResult, filters: Filters): FilterDecision {
+export function filterGame(game: GameResult, filters: Filters): FilterDecision {
   if (filters.ignoreNameKeys.has(normalizeGameName(game.name))) {
     return { matched: false, reason: `ignored name "${game.name}"` };
   }
@@ -1437,7 +1525,7 @@ function hasEarlyAccessGenre(game: GameResult): boolean {
   return game.genres.some((genre) => genre.id === "70" || genre.description?.toLowerCase() === "early access");
 }
 
-function hasInstallLink(html: string, appid: number): boolean {
+export function hasInstallLink(html: string, appid: number): boolean {
   return html.includes(`steam://install/${appid}`) || new RegExp(`InstallGame\\(\\s*${appid}\\b`).test(html);
 }
 
@@ -1445,7 +1533,7 @@ function normalizeGameName(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
+export function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
   if (sort === "discount_asc") return ascending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
   if (sort === "discount_desc") return descending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
   if (sort === "rating_asc") return ascending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
@@ -1481,7 +1569,7 @@ function byName(a: GameResult, b: GameResult): number {
   return a.name.localeCompare(b.name);
 }
 
-function parseSteamReleaseDate(value: string | null): number | null {
+export function parseSteamReleaseDate(value: string | null): number | null {
   if (!value) return null;
 
   const parsed = Date.parse(value);
@@ -1500,7 +1588,7 @@ function roundPercent(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function approximateEuroPrice(
+export function approximateEuroPrice(
   price: PriceOverview | undefined,
   config: EuroApproximationConfig
 ): GamePriceEuroApproximation {
@@ -1640,8 +1728,15 @@ async function mapConcurrent<T, R>(
   return results;
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+function isDirectExecution(): boolean {
+  const scriptPath = process.argv[1];
+  return scriptPath !== undefined && import.meta.url === pathToFileURL(scriptPath).href;
+}
+
+if (isDirectExecution()) {
+  runSteamGames().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
+}
