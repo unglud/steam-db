@@ -1,0 +1,13 @@
+{
+  "name": "steam-db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "games": "node --env-file=.env src/steam-games.ts",
+    "games:sample": "node --env-file=.env src/steam-games.ts \"displayOnly=Game&min_discount=25&min_rating=0&min_release=2000-01-01&min_reviews=500&os=applesilicon&sort=discount_asc&tagid=-1625%2C-1664%2C-3799%2C-3843%2C-3859%2C-5537%2C-7178\" --limit=25 --pages=1 --max-candidates=25"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
