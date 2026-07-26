@@ -1,10 +1,18 @@
-# Steam games deals
+# Steam Deals JSON
 
-An easy way to get a curated JSON list of discounted Steam games. Tune the filters you care about, such as minimum discount, review count, platform, release date, tags, ignored titles, and demo availability, then run one command to generate a clean result file.
+Steam Deals JSON is a small TypeScript Steam sale tracker and discount finder. It gives you an easy way to generate a curated JSON list of discounted Steam games, with filters for minimum discount, review count, platform, release date, tags, ignored titles, and demo availability.
 
-The script uses public Steam Store endpoints, enriches each search result with price, reviews, description, demo availability, and genres, then writes a timestamped JSON result file. It is useful for building your own sale browser, personal watchlist, recommendation pipeline, dashboard, or static dataset.
+The script uses public Steam Store endpoints, enriches each search result with price, reviews, description, demo availability, and genres, then writes a timestamped JSON result file. It is useful for building your own Steam sale browser, game deals watchlist, recommendation pipeline, dashboard, or static dataset.
 
 No Steam API key is required.
+
+## Features
+
+- Steam deals crawler for discounted games and sale results
+- Configurable filters for discounts, reviews, release date, platform, tags, and ignored game names
+- Enriched game JSON with price, EUR approximation, reviews, description, genres, and verified demo availability
+- Disk cache, request pacing, retry/backoff, and verbose progress logs
+- One-shot CLI mode plus a Docker HTTP server that serves the latest result JSON
 
 ## Quick start
 

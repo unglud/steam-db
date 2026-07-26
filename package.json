@@ -1,14 +1,23 @@
 {
   "name": "steam-db",
   "version": "0.1.0",
-  "description": "Fetch filtered Steam sale games as JSON.",
+  "description": "Steam deals JSON crawler for discounted games, reviews, demos, and sale filters.",
   "private": true,
   "license": "MIT",
   "keywords": [
     "steam",
     "steam-store",
+    "steam-deals",
+    "steam-sales",
+    "steam-discounts",
+    "steam-sale-tracker",
+    "steam-crawler",
     "games",
-    "sales"
+    "game-deals",
+    "sales",
+    "json",
+    "typescript",
+    "docker"
   ],
   "packageManager": "pnpm@11.9.0",
   "type": "module",
