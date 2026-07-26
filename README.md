@@ -23,17 +23,11 @@ Each item in `games` keeps the basic Steam identity at the top level:
   "description": "Battle beyond the Underworld using dark sorcery to take on the Titan of Time in this bewitching sequel to the award-winning rogue-like dungeon crawler.",
   "releaseDate": "Sep 25, 2025",
   "price": {
-    "currency": "MYR",
-    "euroApproximation": {
-      "currency": "EUR",
-      "sourceCurrency": "MYR",
-      "sourceToEurRate": 0.2145,
-      "final": 12.87,
-      "finalFormatted": "€12.87"
-    }
+    "discountPercent": 25,
+    "finalFormatted": "RM59.00",
+    "finalEuroFormatted": "€12.66"
   },
   "reviews": {},
-  "recommendations": 112725,
   "genres": []
 }
 ```
@@ -49,6 +43,7 @@ Each item in `games` keeps the basic Steam identity at the top level:
 - `sort: "discount_asc" | "discount_desc" | "rating_asc" | "rating_desc" | "reviews_asc" | "reviews_desc" | "positive_asc" | "positive_desc" | "release_asc" | "release_desc" | "price_asc" | "price_desc"`
 - `includeTags: [19]`
 - `excludeTags: [1625, 1664]`
+- `ignoreNames: ["Some Game Name"]`
 
 `os=applesilicon` is mapped to Steam's public `mac` search filter. The public Steam store APIs expose Mac support, but not a reliable Apple Silicon-native flag.
 
@@ -62,7 +57,7 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `start`: first Steam search offset
 - `concurrency`: concurrent detail/review lookups
 - `country`: country code for price data
-- `euroApproximation.myrToEurRate`: MYR to EUR approximation used inside each `price.euroApproximation`
+- `euroApproximation.myrToEurRate`: MYR to EUR approximation used for each `price.finalEuroFormatted`
 - `language`: language for store details
 - `requestPacing`: minimum delay between fresh Steam requests per endpoint
 - `retry`: retry/backoff settings for 429 and temporary Steam failures

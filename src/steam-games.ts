@@ -51,6 +51,7 @@ type EditableFilters = {
   sort: SortKey;
   includeTags: number[];
   excludeTags: number[];
+  ignoreNames: string[];
   term: string;
 };
 
@@ -105,6 +106,8 @@ type Filters = {
   sort: SortKey;
   includeTags: number[];
   excludeTags: number[];
+  ignoreNames: string[];
+  ignoreNameKeys: Set<string>;
   term: string;
 };
 
@@ -139,9 +142,6 @@ type StoreDetails = {
   release_date?: {
     coming_soon?: boolean;
     date?: string;
-  };
-  recommendations?: {
-    total?: number;
   };
   genres?: Array<{ id?: string; description?: string }>;
 };
@@ -216,7 +216,6 @@ type GameResult = {
   releaseDate: string | null;
   price: GamePrice;
   reviews: GameReviews;
-  recommendations: number | null;
   genres: GameGenre[];
   internal: {
     releaseTimestamp: number | null;
@@ -228,7 +227,22 @@ type GameResult = {
   };
 };
 
-type SerializableGameResult = Omit<GameResult, "internal">;
+type SerializableGamePrice = {
+  discountPercent: number;
+  finalFormatted: string | null;
+  finalEuroFormatted: string | null;
+};
+
+type SerializableGameResult = {
+  appid: number;
+  name: string;
+  steamUrl: string;
+  description: string | null;
+  releaseDate: string | null;
+  price: SerializableGamePrice;
+  reviews: GameReviews;
+  genres: GameGenre[];
+};
 
 type FilterDecision = {
   matched: boolean;
@@ -283,6 +297,7 @@ const SCRIPT_CONFIG: ScriptConfig = {
     sort: "positive_desc",
     includeTags: [],
     excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
+    ignoreNames: [],
     term: "",
   },
 };
@@ -292,13 +307,10 @@ const SEARCH_PAGE_SIZE = 50;
 const requestQueues = new Map<RequestNamespace, Promise<void>>();
 const lastRequestAt = new Map<RequestNamespace, number>();
 const DETAIL_FILTERS = [
+  "basic",
   "price_overview",
-  "short_description",
   "release_date",
   "platforms",
-  "recommendations",
-  "name",
-  "steam_appid",
   "genres",
 ].join(",");
 
@@ -736,6 +748,7 @@ function isNonNegativeNumber(value: number): boolean {
 function normalizeFilters(config: EditableFilters): Filters {
   const minRelease = config.minRelease || "1970-01-01";
   const minReleaseTime = Date.parse(`${minRelease}T00:00:00Z`);
+  const ignoreNames = config.ignoreNames.map((name) => name.trim()).filter(Boolean);
 
   if (!Number.isFinite(minReleaseTime)) {
     throw new Error(`min_release must be an ISO date like 2000-01-01. Got "${minRelease}".`);
@@ -752,6 +765,8 @@ function normalizeFilters(config: EditableFilters): Filters {
     sort: parseSort(config.sort),
     includeTags: config.includeTags,
     excludeTags: config.excludeTags.map((tag) => Math.abs(tag)),
+    ignoreNames,
+    ignoreNameKeys: new Set(ignoreNames.map(normalizeGameName)),
     term: config.term,
   };
 }
@@ -946,7 +961,6 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
       negative,
       positivePercent: reviewTotal > 0 ? roundPercent((positive / reviewTotal) * 100) : null,
     },
-    recommendations: details.recommendations?.total ?? null,
     genres: (details.genres ?? []).map((genre) => ({
       id: genre.id ?? null,
       description: genre.description ?? null,
@@ -966,7 +980,6 @@ function serializeGame({
   releaseDate,
   price,
   reviews,
-  recommendations,
   genres,
 }: GameResult): SerializableGameResult {
   return {
@@ -975,10 +988,17 @@ function serializeGame({
     steamUrl,
     description,
     releaseDate,
-    price,
+    price: serializePrice(price),
     reviews,
-    recommendations,
     genres,
+  };
+}
+
+function serializePrice(price: GamePrice): SerializableGamePrice {
+  return {
+    discountPercent: price.discountPercent,
+    finalFormatted: price.finalFormatted,
+    finalEuroFormatted: price.euroApproximation.finalFormatted,
   };
 }
 
@@ -1270,6 +1290,9 @@ function matchesFilters(game: GameResult, filters: Filters): boolean {
 }
 
 function filterGame(game: GameResult, filters: Filters): FilterDecision {
+  if (filters.ignoreNameKeys.has(normalizeGameName(game.name))) {
+    return { matched: false, reason: `ignored name "${game.name}"` };
+  }
   if (hasEarlyAccessGenre(game)) {
     return { matched: false, reason: "Early Access genre" };
   }
@@ -1313,6 +1336,10 @@ function filterGame(game: GameResult, filters: Filters): FilterDecision {
 
 function hasEarlyAccessGenre(game: GameResult): boolean {
   return game.genres.some((genre) => genre.id === "70" || genre.description?.toLowerCase() === "early access");
+}
+
+function normalizeGameName(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
@@ -1411,6 +1438,7 @@ function serializableFilters(filters: Filters) {
     sort: filters.sort,
     includeTags: filters.includeTags,
     excludeTags: filters.excludeTags,
+    ignoreNames: filters.ignoreNames,
     term: filters.term,
   };
 }
