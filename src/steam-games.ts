@@ -13,6 +13,8 @@ type SortKey =
   | "rating_desc"
   | "reviews_asc"
   | "reviews_desc"
+  | "positive_asc"
+  | "positive_desc"
   | "release_asc"
   | "release_desc"
   | "price_asc"
@@ -28,6 +30,7 @@ type RuntimeConfig = {
   concurrency: number;
   country: string;
   language: string;
+  euroApproximation: EuroApproximationConfig;
   outputMode: OutputMode;
   outputFile: string | null;
   progress: boolean;
@@ -49,6 +52,10 @@ type EditableFilters = {
 
 type ScriptConfig = RuntimeConfig & {
   filters: EditableFilters;
+};
+
+type EuroApproximationConfig = {
+  myrToEurRate: number;
 };
 
 type CacheConfig = {
@@ -100,6 +107,7 @@ type PriceOverview = {
 type StoreDetails = {
   name?: string;
   steam_appid?: number;
+  short_description?: string;
   price_overview?: PriceOverview;
   platforms?: {
     windows?: boolean;
@@ -149,6 +157,17 @@ type GamePrice = {
   discountPercent: number;
   initialFormatted: string | null;
   finalFormatted: string | null;
+  euroApproximation: GamePriceEuroApproximation;
+};
+
+type GamePriceEuroApproximation = {
+  currency: "EUR";
+  sourceCurrency: string | null;
+  sourceToEurRate: number;
+  initial: number | null;
+  final: number | null;
+  initialFormatted: string | null;
+  finalFormatted: string | null;
 };
 
 type GameReviews = {
@@ -169,6 +188,7 @@ type GameResult = {
   appid: number;
   name: string;
   steamUrl: string;
+  description: string | null;
   releaseDate: string | null;
   price: GamePrice;
   reviews: GameReviews;
@@ -188,8 +208,11 @@ type SerializableGameResult = Omit<GameResult, "internal">;
 
 // Edit this block to change what `pnpm run games` returns.
 const SCRIPT_CONFIG: ScriptConfig = {
-  country: process.env.STEAM_CC ?? "US",
+  country: "MY",
   language: process.env.STEAM_LANG ?? "english",
+  euroApproximation: {
+    myrToEurRate: 0.2145,
+  },
   start: 0,
   pages: null,
   limit: null,
@@ -212,7 +235,7 @@ const SCRIPT_CONFIG: ScriptConfig = {
     minRelease: "2000-01-01",
     minReviews: 500,
     os: "mac",
-    sort: "discount_asc",
+    sort: "positive_desc",
     includeTags: [],
     excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
     term: "",
@@ -223,6 +246,7 @@ const USER_AGENT = "steam-db-ts-script/0.1 (+https://store.steampowered.com)";
 const SEARCH_PAGE_SIZE = 50;
 const DETAIL_FILTERS = [
   "price_overview",
+  "short_description",
   "release_date",
   "platforms",
   "recommendations",
@@ -418,6 +442,9 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (!isPositiveNumber(config.cache.reviewSummaryTtlHours)) {
     throw new Error("SCRIPT_CONFIG.cache.reviewSummaryTtlHours must be a positive number.");
   }
+  if (!isPositiveNumber(config.euroApproximation.myrToEurRate)) {
+    throw new Error("SCRIPT_CONFIG.euroApproximation.myrToEurRate must be a positive number.");
+  }
 
   return {
     limit: config.limit,
@@ -427,6 +454,7 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     concurrency: config.concurrency,
     country: config.country.toUpperCase(),
     language: config.language,
+    euroApproximation: config.euroApproximation,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
@@ -482,6 +510,8 @@ function parseSort(value: string): SortKey {
     "rating_desc",
     "reviews_asc",
     "reviews_desc",
+    "positive_asc",
+    "positive_desc",
     "release_asc",
     "release_desc",
     "price_asc",
@@ -587,6 +617,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
     appid: details.steam_appid ?? candidate.appid,
     name: details.name ?? candidate.name ?? String(candidate.appid),
     steamUrl: `https://store.steampowered.com/app/${candidate.appid}/`,
+    description: details.short_description ?? null,
     releaseDate: details.release_date?.date ?? null,
     price: {
       currency: price?.currency ?? null,
@@ -595,6 +626,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
       discountPercent: price?.discount_percent ?? 0,
       initialFormatted: price?.initial_formatted ?? null,
       finalFormatted: price?.final_formatted ?? null,
+      euroApproximation: approximateEuroPrice(price, config.euroApproximation),
     },
     reviews: {
       score: reviews.review_score ?? null,
@@ -620,6 +652,7 @@ function serializeGame({
   appid,
   name,
   steamUrl,
+  description,
   releaseDate,
   price,
   reviews,
@@ -630,6 +663,7 @@ function serializeGame({
     appid,
     name,
     steamUrl,
+    description,
     releaseDate,
     price,
     reviews,
@@ -813,6 +847,8 @@ function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
   if (sort === "rating_desc") return descending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
   if (sort === "reviews_asc") return ascending(a.reviews.total, b.reviews.total) || byName(a, b);
   if (sort === "reviews_desc") return descending(a.reviews.total, b.reviews.total) || byName(a, b);
+  if (sort === "positive_asc") return ascending(a.reviews.positive, b.reviews.positive) || byName(a, b);
+  if (sort === "positive_desc") return descending(a.reviews.positive, b.reviews.positive) || byName(a, b);
   if (sort === "release_asc") return ascending(a.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
   if (sort === "release_desc") return descending(a.internal.releaseTimestamp ?? 0, b.internal.releaseTimestamp ?? 0) || byName(a, b);
   if (sort === "price_asc") return ascending(a.price.final ?? Number.MAX_SAFE_INTEGER, b.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
@@ -852,6 +888,43 @@ function roundPercent(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function approximateEuroPrice(
+  price: PriceOverview | undefined,
+  config: EuroApproximationConfig
+): GamePriceEuroApproximation {
+  const initial = approximateSteamPriceToEuro(price?.initial ?? null, config.myrToEurRate);
+  const final = approximateSteamPriceToEuro(price?.final ?? null, config.myrToEurRate);
+
+  return {
+    currency: "EUR",
+    sourceCurrency: price?.currency ?? null,
+    sourceToEurRate: config.myrToEurRate,
+    initial,
+    final,
+    initialFormatted: formatEuroAmount(initial),
+    finalFormatted: formatEuroAmount(final),
+  };
+}
+
+function approximateSteamPriceToEuro(value: number | null, myrToEurRate: number): number | null {
+  if (value === null) return null;
+  return roundCurrency((value / 100) * myrToEurRate);
+}
+
+function roundCurrency(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function formatEuroAmount(value: number | null): string | null {
+  if (value === null) return null;
+  return new Intl.NumberFormat("en-IE", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function serializableFilters(filters: Filters) {
   return {
     displayOnly: filters.displayOnly,
@@ -876,6 +949,7 @@ function serializableOptions(config: RuntimeConfig) {
     concurrency: config.concurrency,
     country: config.country,
     language: config.language,
+    euroApproximation: config.euroApproximation,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,

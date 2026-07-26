@@ -20,8 +20,18 @@ Each item in `games` keeps the basic Steam identity at the top level:
   "appid": 1145350,
   "name": "Hades II",
   "steamUrl": "https://store.steampowered.com/app/1145350/",
+  "description": "Battle beyond the Underworld using dark sorcery to take on the Titan of Time in this bewitching sequel to the award-winning rogue-like dungeon crawler.",
   "releaseDate": "Sep 25, 2025",
-  "price": {},
+  "price": {
+    "currency": "MYR",
+    "euroApproximation": {
+      "currency": "EUR",
+      "sourceCurrency": "MYR",
+      "sourceToEurRate": 0.2145,
+      "final": 12.87,
+      "finalFormatted": "€12.87"
+    }
+  },
   "reviews": {},
   "recommendations": 112725,
   "genres": []
@@ -36,7 +46,7 @@ Each item in `games` keeps the basic Steam identity at the top level:
 - `minRelease: "2000-01-01"`
 - `minReviews: 500`
 - `os: "win" | "mac" | "linux" | "applesilicon"`
-- `sort: "discount_asc" | "discount_desc" | "rating_asc" | "rating_desc" | "reviews_asc" | "reviews_desc" | "release_asc" | "release_desc" | "price_asc" | "price_desc"`
+- `sort: "discount_asc" | "discount_desc" | "rating_asc" | "rating_desc" | "reviews_asc" | "reviews_desc" | "positive_asc" | "positive_desc" | "release_asc" | "release_desc" | "price_asc" | "price_desc"`
 - `includeTags: [19]`
 - `excludeTags: [1625, 1664]`
 
@@ -52,6 +62,7 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `start`: first Steam search offset
 - `concurrency`: concurrent detail/review lookups
 - `country`: country code for price data
+- `euroApproximation.myrToEurRate`: MYR to EUR approximation used inside each `price.euroApproximation`
 - `language`: language for store details
 - `progress`: print progress messages to stderr
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
