@@ -36,6 +36,7 @@ type RuntimeConfig = {
   outputMode: OutputMode;
   outputFile: string | null;
   progress: boolean;
+  verbose: boolean;
   cache: CacheConfig;
 };
 
@@ -223,6 +224,11 @@ type GameResult = {
 
 type SerializableGameResult = Omit<GameResult, "internal">;
 
+type FilterDecision = {
+  matched: boolean;
+  reason: string | null;
+};
+
 // Edit this block to change what `pnpm run games` returns.
 const SCRIPT_CONFIG: ScriptConfig = {
   country: "MY",
@@ -248,6 +254,7 @@ const SCRIPT_CONFIG: ScriptConfig = {
   outputMode: "json",
   outputFile: "steam-games.json",
   progress: true,
+  verbose: true,
   cache: {
     enabled: true,
     directory: ".cache/steam",
@@ -293,17 +300,28 @@ async function main(): Promise<void> {
 
   try {
     logProgress(config, "Starting Steam search.");
+    logVerbose(config, `Runtime options: ${JSON.stringify(serializableOptions(config))}`);
+    logVerbose(config, `Normalized filters: ${JSON.stringify(serializableFilters(filters))}`);
     if (outputWriter.path !== null) {
       logProgress(config, `Writing ${config.outputMode.toUpperCase()} output to ${outputWriter.path}.`);
+    } else {
+      logVerbose(config, "Writing output to stdout.");
     }
     if (config.pages === null && config.maxCandidates === null && config.limit === null) {
       logProgress(config, "Full crawl enabled: this can take several minutes and may hit Steam rate limits.");
     }
     if (config.cache.enabled && config.cache.cleanupExpired) {
+      logVerbose(config, `Cleaning expired cache files under ${config.cache.directory}.`);
       const removedCacheFiles = await cleanupExpiredCache(config);
       if (removedCacheFiles > 0) {
         logProgress(config, `Removed ${removedCacheFiles} expired cache file(s).`);
+      } else {
+        logVerbose(config, "No expired cache files found.");
       }
+    } else if (!config.cache.enabled) {
+      logVerbose(config, "Cache disabled; every request will fetch fresh Steam data.");
+    } else {
+      logVerbose(config, "Expired cache cleanup disabled.");
     }
 
     if (filters.os === "applesilicon") {
@@ -315,19 +333,42 @@ async function main(): Promise<void> {
     const discoveredCandidates = await fetchSearchCandidates(filters, config);
     const candidates =
       config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
+    if (config.maxCandidates !== null && discoveredCandidates.length > candidates.length) {
+      logVerbose(
+        config,
+        `Limiting candidates from ${discoveredCandidates.length} to maxCandidates=${config.maxCandidates}.`
+      );
+    }
     logProgress(config, `Discovered ${discoveredCandidates.length} candidate(s); processing ${candidates.length}.`);
 
     const skippedCandidates: string[] = [];
     let processedCandidates = 0;
     const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
       try {
+        logVerbose(config, `Processing candidate ${candidateLabel(candidate)}.`);
         const game = await enrichCandidate(candidate, config);
-        if (config.outputMode === "ndjson" && game !== null && matchesFilters(game, filters)) {
-          await outputWriter.write(`${JSON.stringify(serializeGame(game))}\n`);
+        if (game === null) {
+          logVerbose(config, `Candidate ${candidateLabel(candidate)} returned no appdetails data.`);
+        } else {
+          logVerbose(
+            config,
+            `Candidate ${candidateLabel(candidate)} enriched as ${gameLabel(game)}; price=${game.price.finalFormatted ?? game.price.final ?? "n/a"} ${game.price.currency ?? ""}; positive=${game.reviews.positive}; totalReviews=${game.reviews.total}.`
+          );
+        }
+        if (config.outputMode === "ndjson" && game !== null) {
+          const decision = filterGame(game, filters);
+          if (decision.matched) {
+            await outputWriter.write(`${JSON.stringify(serializeGame(game))}\n`);
+            logVerbose(config, `Wrote NDJSON game line for ${gameLabel(game)}.`);
+          } else {
+            logVerbose(config, `Skipped NDJSON game line for ${gameLabel(game)}: ${decision.reason}.`);
+          }
         }
         return game;
       } catch (error) {
-        skippedCandidates.push(`${candidate.appid}: ${errorMessage(error).split("\n")[0]}`);
+        const message = errorMessage(error).split("\n")[0];
+        logVerbose(config, `Candidate ${candidateLabel(candidate)} failed: ${message}`);
+        skippedCandidates.push(`${candidate.appid}: ${message}`);
         return null;
       } finally {
         processedCandidates += 1;
@@ -348,12 +389,36 @@ async function main(): Promise<void> {
       );
     }
 
-    const filtered = games
-      .filter((game): game is GameResult => game !== null)
-      .filter((game) => matchesFilters(game, filters))
+    const enrichedGames = games.filter((game): game is GameResult => game !== null);
+    const filterReasonCounts = new Map<string, number>();
+    const filtered = enrichedGames
+      .filter((game) => {
+        const decision = filterGame(game, filters);
+        if (decision.matched) {
+          logVerbose(config, `Accepted ${gameLabel(game)} after filters.`);
+          return true;
+        }
+
+        const reason = decision.reason ?? "unknown";
+        incrementCount(filterReasonCounts, reason);
+        logVerbose(config, `Filtered out ${gameLabel(game)}: ${reason}.`);
+        return false;
+      })
       .sort((a, b) => compareGames(a, b, filters.sort));
+    logProgress(
+      config,
+      `Enriched ${enrichedGames.length}/${candidates.length} candidate(s); ${filtered.length} matched filters.`
+    );
+    if (filterReasonCounts.size > 0) {
+      logVerbose(config, `Filter rejection counts: ${formatCounts(filterReasonCounts)}.`);
+    }
+    logVerbose(config, `Sorting ${filtered.length} matched game(s) by ${filters.sort}.`);
     const returnedGames = config.limit === null ? filtered : filtered.slice(0, config.limit);
+    if (config.limit !== null) {
+      logVerbose(config, `Applying limit=${config.limit}; returning ${returnedGames.length}/${filtered.length} matched game(s).`);
+    }
     const outputGames = returnedGames.map(serializeGame);
+    logVerbose(config, `Serialized ${outputGames.length} game(s) for output.`);
 
     const output = {
       generatedAt: new Date().toISOString(),
@@ -369,8 +434,10 @@ async function main(): Promise<void> {
 
     if (config.outputMode === "json") {
       await outputWriter.write(`${JSON.stringify(output, null, 2)}\n`);
+      logVerbose(config, `Wrote JSON output with ${outputGames.length} game(s) and ${warnings.length} warning(s).`);
     } else {
       await outputWriter.write(`${JSON.stringify({ type: "summary", ...output, games: undefined })}\n`);
+      logVerbose(config, `Wrote NDJSON summary with ${warnings.length} warning(s).`);
     }
     if (outputWriter.path !== null) {
       logProgress(config, `Finished writing ${outputWriter.path}.`);
@@ -382,6 +449,7 @@ async function main(): Promise<void> {
 
 async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> {
   if (config.outputFile === null) {
+    logVerbose(config, "No outputFile configured; output will stream to stdout.");
     return {
       path: null,
       write: async (chunk: string) => {
@@ -395,14 +463,17 @@ async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> 
   const { basename, dirname, extname, join } = await import("node:path");
   const outputDir = dirname(config.outputFile);
   if (outputDir !== ".") {
+    logVerbose(config, `Ensuring output directory exists: ${outputDir}.`);
     await mkdir(outputDir, { recursive: true });
   }
 
   for (let attempt = 0; attempt < 1000; attempt += 1) {
     const path = withNumericSuffix(config.outputFile, attempt, { basename, dirname, extname, join });
     try {
+      logVerbose(config, `Attempting to create output file ${path}.`);
       const file = await open(path, "wx");
       let pendingWrite = Promise.resolve();
+      logVerbose(config, `Created output file ${path}.`);
 
       return {
         path,
@@ -416,7 +487,10 @@ async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> 
         },
       };
     } catch (error) {
-      if (hasErrorCode(error, "EEXIST")) continue;
+      if (hasErrorCode(error, "EEXIST")) {
+        logVerbose(config, `Output file ${path} already exists; trying next suffix.`);
+        continue;
+      }
       throw error;
     }
   }
@@ -469,6 +543,12 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (config.outputFile !== null && config.outputFile.trim() === "") {
     throw new Error("SCRIPT_CONFIG.outputFile must be a file path string or null.");
   }
+  if (typeof config.progress !== "boolean") {
+    throw new Error("SCRIPT_CONFIG.progress must be true or false.");
+  }
+  if (typeof config.verbose !== "boolean") {
+    throw new Error("SCRIPT_CONFIG.verbose must be true or false.");
+  }
   if (config.cache.directory.trim() === "") {
     throw new Error("SCRIPT_CONFIG.cache.directory must be a non-empty path.");
   }
@@ -520,6 +600,7 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
+    verbose: config.verbose,
     cache: config.cache,
   };
 }
@@ -590,6 +671,10 @@ function parseSort(value: string): SortKey {
 
 async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): Promise<Candidate[]> {
   const candidates = new Map<number, Candidate>();
+  logVerbose(
+    config,
+    `Starting candidate discovery at offset ${config.start} with page size ${SEARCH_PAGE_SIZE}; pages=${config.pages ?? "all"}.`
+  );
 
   for (let page = 0; config.pages === null || page < config.pages; page += 1) {
     const previousCandidateCount = candidates.size;
@@ -623,6 +708,7 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       url.searchParams.set("term", filters.term);
     }
 
+    logVerbose(config, `Requesting search page ${page + 1}: ${redactUrl(url)}.`);
     const response = await fetchCachedJson<SearchResponse>(
       config,
       "search",
@@ -631,18 +717,48 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       () => fetchJson<SearchResponse>(url, config)
     );
     const items = response.items ?? [];
-    if (items.length === 0) break;
+    logVerbose(config, `Search page ${page + 1} returned ${items.length} item(s).`);
+    if (items.length === 0) {
+      logVerbose(config, `Stopping search discovery: page ${page + 1} returned no items.`);
+      break;
+    }
 
+    let duplicates = 0;
+    let missingAppIds = 0;
     for (const item of items) {
       const appid = extractAppId(item.logo ?? "");
-      if (appid === null) continue;
+      if (appid === null) {
+        missingAppIds += 1;
+        logVerbose(config, `Search item "${item.name ?? "unknown"}" had no extractable appid.`);
+        continue;
+      }
+      if (candidates.has(appid)) {
+        duplicates += 1;
+        logVerbose(config, `Duplicate search candidate ignored: ${appid} (${item.name ?? "unknown"}).`);
+      } else {
+        logVerbose(config, `Discovered search candidate ${appid} (${item.name ?? "unknown"}).`);
+      }
       candidates.set(appid, { appid, name: item.name });
+    }
+    if (duplicates > 0 || missingAppIds > 0) {
+      logVerbose(
+        config,
+        `Search page ${page + 1} skipped ${duplicates} duplicate item(s) and ${missingAppIds} item(s) without appids.`
+      );
     }
     logProgress(config, `Fetched search page ${page + 1}; found ${candidates.size} unique candidate(s).`);
 
-    if (items.length < SEARCH_PAGE_SIZE || candidates.size === previousCandidateCount) break;
+    if (items.length < SEARCH_PAGE_SIZE) {
+      logVerbose(config, `Stopping search discovery: page ${page + 1} returned fewer than ${SEARCH_PAGE_SIZE} items.`);
+      break;
+    }
+    if (candidates.size === previousCandidateCount) {
+      logVerbose(config, `Stopping search discovery: page ${page + 1} added no new candidates.`);
+      break;
+    }
   }
 
+  logVerbose(config, `Candidate discovery complete with ${candidates.size} unique candidate(s).`);
   return [...candidates.values()];
 }
 
@@ -661,12 +777,16 @@ function extractAppId(logo: string): number | null {
 }
 
 async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Promise<GameResult | null> {
+  logVerbose(config, `Fetching app details and review summary for ${candidateLabel(candidate)}.`);
   const [details, reviews] = await Promise.all([
     fetchAppDetails(candidate.appid, config),
     fetchReviewSummary(candidate.appid, config),
   ]);
 
-  if (!details) return null;
+  if (!details) {
+    logVerbose(config, `No store details returned for ${candidateLabel(candidate)}.`);
+    return null;
+  }
 
   const price = details.price_overview;
   const reviewTotal = reviews.total_reviews ?? 0;
@@ -678,6 +798,10 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
     mac: details.platforms?.mac ?? false,
     linux: details.platforms?.linux ?? false,
   };
+  logVerbose(
+    config,
+    `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}.`
+  );
 
   return {
     appid: details.steam_appid ?? candidate.appid,
@@ -744,6 +868,7 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
   url.searchParams.set("filters", DETAIL_FILTERS);
   url.searchParams.set("cc", config.country);
   url.searchParams.set("l", config.language);
+  logVerbose(config, `Preparing appdetails request for ${appid}: ${redactUrl(url)}.`);
 
   const response = await fetchCachedJson<AppDetailsResponse>(
     config,
@@ -753,8 +878,12 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
     () => fetchJson<AppDetailsResponse>(url, config)
   );
   const app = response[String(appid)];
-  if (!app?.success || !app.data) return null;
+  if (!app?.success || !app.data) {
+    logVerbose(config, `Appdetails response for ${appid} was not successful or had no data.`);
+    return null;
+  }
 
+  logVerbose(config, `Appdetails loaded for ${appid}: ${app.data.name ?? "unnamed app"}.`);
   return app.data;
 }
 
@@ -764,6 +893,7 @@ async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise
   url.searchParams.set("language", "all");
   url.searchParams.set("purchase_type", "all");
   url.searchParams.set("num_per_page", "0");
+  logVerbose(config, `Preparing review summary request for ${appid}: ${redactUrl(url)}.`);
 
   const response = await fetchCachedJson<ReviewResponse>(
     config,
@@ -772,7 +902,12 @@ async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise
     hoursToMs(config.cache.reviewSummaryTtlHours),
     () => fetchJson<ReviewResponse>(url, config)
   );
-  return response.query_summary ?? {};
+  const summary = response.query_summary ?? {};
+  logVerbose(
+    config,
+    `Review summary loaded for ${appid}: total=${summary.total_reviews ?? 0}, positive=${summary.total_positive ?? 0}, negative=${summary.total_negative ?? 0}.`
+  );
+  return summary;
 }
 
 async function fetchCachedJson<T>(
@@ -783,6 +918,7 @@ async function fetchCachedJson<T>(
   loadFresh: () => Promise<T>
 ): Promise<T> {
   if (!config.cache.enabled) {
+    logVerbose(config, `Cache disabled for ${namespace}; fetching ${summarizeCacheKey(key)}.`);
     await waitForRequestSlot(namespace, config);
     return loadFresh();
   }
@@ -791,10 +927,17 @@ async function fetchCachedJson<T>(
   const cached = await readCache<T>(filePath);
   const now = Date.now();
   if (cached !== null && cached.expiresAt > now) {
+    logVerbose(config, `Cache hit for ${namespace}: ${summarizeCacheKey(key)} (expires ${formatTimestamp(cached.expiresAt)}).`);
     return cached.data;
+  }
+  if (cached !== null) {
+    logVerbose(config, `Cache expired for ${namespace}: ${summarizeCacheKey(key)} (expired ${formatTimestamp(cached.expiresAt)}).`);
+  } else {
+    logVerbose(config, `Cache miss for ${namespace}: ${summarizeCacheKey(key)}.`);
   }
 
   await waitForRequestSlot(namespace, config);
+  logVerbose(config, `Fetching fresh ${namespace}: ${summarizeCacheKey(key)}.`);
   const data = await loadFresh();
   await writeCache(filePath, {
     createdAt: now,
@@ -802,6 +945,7 @@ async function fetchCachedJson<T>(
     key,
     data,
   });
+  logVerbose(config, `Stored ${namespace} cache file ${filePath} (ttl ${formatDuration(ttlMs)}).`);
   return data;
 }
 
@@ -813,7 +957,10 @@ async function waitForRequestSlot(namespace: RequestNamespace, config: RuntimeCo
   const next = previous.catch(() => {}).then(async () => {
     const previousRequestAt = lastRequestAt.get(namespace) ?? 0;
     const waitMs = Math.max(0, previousRequestAt + delayMs - Date.now());
-    if (waitMs > 0) await sleep(waitMs);
+    if (waitMs > 0) {
+      logVerbose(config, `Waiting ${formatDuration(waitMs)} before next fresh ${namespace} request.`);
+      await sleep(waitMs);
+    }
     lastRequestAt.set(namespace, Date.now());
   });
 
@@ -889,6 +1036,7 @@ async function cleanupExpiredCache(config: RuntimeConfig): Promise<number> {
       try {
         await unlink(path);
         removed += 1;
+        logVerbose(config, `Deleted expired cache file ${path}.`);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) throw error;
       }
@@ -920,6 +1068,7 @@ function hoursToMs(hours: number): number {
 async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promise<T> {
   let response: Response;
   try {
+    logVerbose(config, `HTTP GET ${redactUrl(url)} (attempt ${attempt + 1}/${config.retry.maxAttempts}).`);
     response = await fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
@@ -940,6 +1089,7 @@ async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promi
     throw error;
   }
 
+  logVerbose(config, `HTTP ${response.status} ${response.statusText} for ${redactUrl(url)}.`);
   if (!response.ok) {
     const body = await response.text();
     if (shouldRetry(response.status) && attempt + 1 < config.retry.maxAttempts) {
@@ -980,6 +1130,8 @@ function sleep(ms: number): Promise<void> {
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
+  if (ms >= 60 * 60 * 1000) return `${Math.round(ms / (60 * 60 * 1000))}h`;
+  if (ms >= 60 * 1000) return `${Math.round(ms / (60 * 1000))}m`;
   return `${Math.round(ms / 1000)}s`;
 }
 
@@ -994,17 +1146,49 @@ function errorMessage(error: unknown): string {
 }
 
 function matchesFilters(game: GameResult, filters: Filters): boolean {
-  if (hasEarlyAccessGenre(game)) return false;
-  if (game.price.discountPercent < filters.minDiscount) return false;
-  if (game.reviews.total < filters.minReviews) return false;
-  if ((game.reviews.positivePercent ?? 0) < filters.minRating) return false;
-  if (game.internal.releaseTimestamp !== null && game.internal.releaseTimestamp < filters.minReleaseTime) return false;
+  return filterGame(game, filters).matched;
+}
 
-  if (filters.os === "win" && !game.internal.platforms.windows) return false;
-  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.internal.platforms.mac) return false;
-  if (filters.os === "linux" && !game.internal.platforms.linux) return false;
+function filterGame(game: GameResult, filters: Filters): FilterDecision {
+  if (hasEarlyAccessGenre(game)) {
+    return { matched: false, reason: "Early Access genre" };
+  }
+  if (game.price.discountPercent < filters.minDiscount) {
+    return {
+      matched: false,
+      reason: `discount ${game.price.discountPercent} < minDiscount ${filters.minDiscount}`,
+    };
+  }
+  if (game.reviews.total < filters.minReviews) {
+    return {
+      matched: false,
+      reason: `reviews.total ${game.reviews.total} < minReviews ${filters.minReviews}`,
+    };
+  }
+  if ((game.reviews.positivePercent ?? 0) < filters.minRating) {
+    return {
+      matched: false,
+      reason: `reviews.positivePercent ${game.reviews.positivePercent ?? 0} < minRating ${filters.minRating}`,
+    };
+  }
+  if (game.internal.releaseTimestamp !== null && game.internal.releaseTimestamp < filters.minReleaseTime) {
+    return {
+      matched: false,
+      reason: `releaseDate before ${filters.minRelease}`,
+    };
+  }
 
-  return true;
+  if (filters.os === "win" && !game.internal.platforms.windows) {
+    return { matched: false, reason: "missing Windows platform support" };
+  }
+  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.internal.platforms.mac) {
+    return { matched: false, reason: "missing macOS platform support" };
+  }
+  if (filters.os === "linux" && !game.internal.platforms.linux) {
+    return { matched: false, reason: "missing Linux platform support" };
+  }
+
+  return { matched: true, reason: null };
 }
 
 function hasEarlyAccessGenre(game: GameResult): boolean {
@@ -1126,6 +1310,7 @@ function serializableOptions(config: RuntimeConfig) {
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
+    verbose: config.verbose,
     cache: config.cache,
   };
 }
@@ -1133,6 +1318,46 @@ function serializableOptions(config: RuntimeConfig) {
 function logProgress(config: RuntimeConfig, message: string): void {
   if (!config.progress) return;
   process.stderr.write(`[steam-games] ${message}\n`);
+}
+
+function logVerbose(config: RuntimeConfig, message: string): void {
+  if (!config.verbose) return;
+  logProgress(config, message);
+}
+
+function candidateLabel(candidate: Candidate): string {
+  return candidate.name ? `${candidate.appid} (${candidate.name})` : String(candidate.appid);
+}
+
+function gameLabel(game: GameResult): string {
+  return `${game.appid} (${game.name})`;
+}
+
+function platformSummary(platforms: { windows: boolean; mac: boolean; linux: boolean }): string {
+  return `windows=${platforms.windows}, mac=${platforms.mac}, linux=${platforms.linux}`;
+}
+
+function summarizeCacheKey(key: string): string {
+  try {
+    return redactUrl(new URL(key));
+  } catch {
+    return key.length > 200 ? `${key.slice(0, 200)}...` : key;
+  }
+}
+
+function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toISOString();
+}
+
+function incrementCount(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function formatCounts(counts: Map<string, number>): string {
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([key, count]) => `${key}: ${count}`)
+    .join("; ");
 }
 
 async function mapConcurrent<T, R>(

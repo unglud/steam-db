@@ -67,6 +67,7 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `requestPacing`: minimum delay between fresh Steam requests per endpoint
 - `retry`: retry/backoff settings for 429 and temporary Steam failures
 - `progress`: print progress messages to stderr
+- `verbose`: print detailed trace logs for cache, requests, candidates, filtering, and output
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
 - `outputFile`: result file path, or `null` for stdout
 - `cache`: disk cache settings
