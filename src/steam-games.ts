@@ -1,10 +1,12 @@
 declare const process: {
   env: Record<string, string | undefined>;
   exitCode?: number;
+  stdout: { write(chunk: string): void };
   stderr: { write(chunk: string): void };
 };
 
 type Source = "search" | "applist";
+type OutputMode = "json" | "ndjson";
 type SortKey =
   | "discount_asc"
   | "discount_desc"
@@ -28,6 +30,9 @@ type RuntimeConfig = {
   country: string;
   language: string;
   source: Source;
+  outputMode: OutputMode;
+  outputFile: string | null;
+  progress: boolean;
 };
 
 type EditableFilters = {
@@ -45,6 +50,12 @@ type EditableFilters = {
 
 type ScriptConfig = RuntimeConfig & {
   filters: EditableFilters;
+};
+
+type OutputWriter = {
+  path: string | null;
+  write(chunk: string): Promise<void>;
+  close(): Promise<void>;
 };
 
 type Filters = {
@@ -200,13 +211,16 @@ const SCRIPT_CONFIG: ScriptConfig = {
   limit: null,
   maxCandidates: null,
   concurrency: 2,
+  outputMode: "json",
+  outputFile: "steam-games.json",
+  progress: true,
   filters: {
     displayOnly: "Game",
     minDiscount: 25,
     minRating: 0,
     minRelease: "2000-01-01",
     minReviews: 500,
-    os: "applesilicon",
+    os: "mac",
     sort: "discount_asc",
     includeTags: [],
     excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
@@ -234,58 +248,156 @@ const DETAIL_FILTERS = [
 async function main(): Promise<void> {
   const config = normalizeRuntimeConfig(SCRIPT_CONFIG);
   const filters = normalizeFilters(SCRIPT_CONFIG.filters);
+  const outputWriter = await createOutputWriter(config);
   const warnings: string[] = [];
 
-  if (filters.os === "applesilicon") {
-    warnings.push(
-      "Steam's public store APIs expose macOS filtering, but not a reliable Apple Silicon-native flag; this query uses os=mac and returns a best-effort macOS requirement hint."
-    );
-  }
-
-  const discoveredCandidates =
-    config.source === "applist"
-      ? await fetchAppListCandidates(config, warnings)
-      : await fetchSearchCandidates(filters, config);
-  const candidates =
-    config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
-
-  const skippedCandidates: string[] = [];
-  const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
-    try {
-      return await enrichCandidate(candidate, config, filters);
-    } catch (error) {
-      skippedCandidates.push(`${candidate.appid}: ${errorMessage(error).split("\n")[0]}`);
-      return null;
+  try {
+    logProgress(config, "Starting Steam search.");
+    if (outputWriter.path !== null) {
+      logProgress(config, `Writing ${config.outputMode.toUpperCase()} output to ${outputWriter.path}.`);
     }
-  });
+    if (config.pages === null && config.maxCandidates === null && config.limit === null) {
+      logProgress(config, "Full crawl enabled: this can take several minutes and may hit Steam rate limits.");
+    }
 
-  if (skippedCandidates.length > 0) {
-    warnings.push(
-      `Skipped ${skippedCandidates.length} candidate(s) after Steam request failures. First errors: ${skippedCandidates
-        .slice(0, 3)
-        .join(" | ")}`
-    );
+    if (filters.os === "applesilicon") {
+      warnings.push(
+        "Steam's public store APIs expose macOS filtering, but not a reliable Apple Silicon-native flag; this query uses os=mac and returns a best-effort macOS requirement hint."
+      );
+    }
+
+    const discoveredCandidates =
+      config.source === "applist"
+        ? await fetchAppListCandidates(config, warnings)
+        : await fetchSearchCandidates(filters, config);
+    const candidates =
+      config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
+    logProgress(config, `Discovered ${discoveredCandidates.length} candidate(s); enriching ${candidates.length}.`);
+
+    const skippedCandidates: string[] = [];
+    let enrichedCandidates = 0;
+    const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
+      try {
+        const game = await enrichCandidate(candidate, config, filters);
+        if (config.outputMode === "ndjson" && game !== null && matchesFilters(game, filters)) {
+          await outputWriter.write(`${JSON.stringify({ type: "game", game })}\n`);
+        }
+        return game;
+      } catch (error) {
+        skippedCandidates.push(`${candidate.appid}: ${errorMessage(error).split("\n")[0]}`);
+        return null;
+      } finally {
+        enrichedCandidates += 1;
+        if (enrichedCandidates === candidates.length || enrichedCandidates % 25 === 0) {
+          logProgress(config, `Enriched ${enrichedCandidates}/${candidates.length} candidate(s).`);
+        }
+      }
+    });
+
+    if (skippedCandidates.length > 0) {
+      warnings.push(
+        `Skipped ${skippedCandidates.length} candidate(s) after Steam request failures. First errors: ${skippedCandidates
+          .slice(0, 3)
+          .join(" | ")}`
+      );
+    }
+
+    const filtered = games
+      .filter((game): game is GameResult => game !== null)
+      .filter((game) => matchesFilters(game, filters))
+      .sort((a, b) => compareGames(a, b, filters.sort));
+    const returnedGames = config.limit === null ? filtered : filtered.slice(0, config.limit);
+
+    const output = {
+      generatedAt: new Date().toISOString(),
+      source: config.source,
+      discoveredCandidates: discoveredCandidates.length,
+      scannedCandidates: candidates.length,
+      returned: returnedGames.length,
+      options: serializableOptions(config),
+      filters: serializableFilters(filters),
+      warnings,
+      games: returnedGames,
+    };
+
+    if (config.outputMode === "json") {
+      await outputWriter.write(`${JSON.stringify(output, null, 2)}\n`);
+    } else {
+      await outputWriter.write(`${JSON.stringify({ type: "summary", ...output, games: undefined })}\n`);
+    }
+    if (outputWriter.path !== null) {
+      logProgress(config, `Finished writing ${outputWriter.path}.`);
+    }
+  } finally {
+    await outputWriter.close();
+  }
+}
+
+async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> {
+  if (config.outputFile === null) {
+    return {
+      path: null,
+      write: async (chunk: string) => {
+        process.stdout.write(chunk);
+      },
+      close: async () => {},
+    };
   }
 
-  const filtered = games
-    .filter((game): game is GameResult => game !== null)
-    .filter((game) => matchesFilters(game, filters))
-    .sort((a, b) => compareGames(a, b, filters.sort));
-  const returnedGames = config.limit === null ? filtered : filtered.slice(0, config.limit);
+  const { mkdir, open } = await import("node:fs/promises");
+  const { basename, dirname, extname, join } = await import("node:path");
+  const outputDir = dirname(config.outputFile);
+  if (outputDir !== ".") {
+    await mkdir(outputDir, { recursive: true });
+  }
 
-  const output = {
-    generatedAt: new Date().toISOString(),
-    source: config.source,
-    discoveredCandidates: discoveredCandidates.length,
-    scannedCandidates: candidates.length,
-    returned: returnedGames.length,
-    options: serializableOptions(config),
-    filters: serializableFilters(filters),
-    warnings,
-    games: returnedGames,
-  };
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const path = withNumericSuffix(config.outputFile, attempt, { basename, dirname, extname, join });
+    try {
+      const file = await open(path, "wx");
+      let pendingWrite = Promise.resolve();
 
-  console.log(JSON.stringify(output, null, 2));
+      return {
+        path,
+        write: async (chunk: string) => {
+          pendingWrite = pendingWrite.then(() => file.writeFile(chunk));
+          await pendingWrite;
+        },
+        close: async () => {
+          await pendingWrite;
+          await file.close();
+        },
+      };
+    } catch (error) {
+      if (hasErrorCode(error, "EEXIST")) continue;
+      throw error;
+    }
+  }
+
+  throw new Error(`Could not create a non-existing output file for ${config.outputFile}.`);
+}
+
+function withNumericSuffix(
+  filePath: string,
+  suffixNumber: number,
+  pathTools: {
+    basename(path: string, suffix?: string): string;
+    dirname(path: string): string;
+    extname(path: string): string;
+    join(...paths: string[]): string;
+  }
+): string {
+  if (suffixNumber === 0) return filePath;
+
+  const dir = pathTools.dirname(filePath);
+  const ext = pathTools.extname(filePath);
+  const name = pathTools.basename(filePath, ext);
+  const suffixedFile = `${name}-${suffixNumber}${ext}`;
+  return dir === "." ? suffixedFile : pathTools.join(dir, suffixedFile);
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
@@ -307,6 +419,12 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (config.source !== "search" && config.source !== "applist") {
     throw new Error('SCRIPT_CONFIG.source must be "search" or "applist".');
   }
+  if (config.outputMode !== "json" && config.outputMode !== "ndjson") {
+    throw new Error('SCRIPT_CONFIG.outputMode must be "json" or "ndjson".');
+  }
+  if (config.outputFile !== null && config.outputFile.trim() === "") {
+    throw new Error("SCRIPT_CONFIG.outputFile must be a file path string or null.");
+  }
 
   return {
     limit: config.limit,
@@ -317,6 +435,9 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     country: config.country.toUpperCase(),
     language: config.language,
     source: config.source,
+    outputMode: config.outputMode,
+    outputFile: config.outputFile,
+    progress: config.progress,
   };
 }
 
@@ -418,6 +539,7 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       if (appid === null) continue;
       candidates.set(appid, { appid, name: item.name });
     }
+    logProgress(config, `Fetched search page ${page + 1}; found ${candidates.size} unique candidate(s).`);
 
     if (items.length < SEARCH_PAGE_SIZE || candidates.size === previousCandidateCount) break;
   }
@@ -459,6 +581,7 @@ async function fetchAppListCandidates(config: RuntimeConfig, warnings: string[])
     for (const app of apps) {
       candidates.push({ appid: app.appid, name: app.name });
     }
+    logProgress(config, `Fetched app-list page ${page + 1}; found ${candidates.length} candidate(s).`);
 
     lastAppId = response.response?.last_appid ?? apps[apps.length - 1]?.appid ?? lastAppId;
     if (!response.response?.have_more_results) break;
@@ -723,7 +846,15 @@ function serializableOptions(config: RuntimeConfig) {
     concurrency: config.concurrency,
     country: config.country,
     language: config.language,
+    outputMode: config.outputMode,
+    outputFile: config.outputFile,
+    progress: config.progress,
   };
+}
+
+function logProgress(config: RuntimeConfig, message: string): void {
+  if (!config.progress) return;
+  process.stderr.write(`[steam-games] ${message}\n`);
 }
 
 async function mapConcurrent<T, R>(

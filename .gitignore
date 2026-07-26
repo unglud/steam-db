@@ -1,3 +1,5 @@
 .idea
 /.env
 /node_modules
+/steam-games*.json
+/steam-games*.ndjson
