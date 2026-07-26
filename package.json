@@ -1,12 +1,20 @@
 {
   "name": "steam-db",
   "version": "0.1.0",
+  "description": "Fetch filtered Steam sale games as JSON.",
   "private": true,
+  "license": "MIT",
+  "keywords": [
+    "steam",
+    "steam-store",
+    "games",
+    "sales"
+  ],
   "packageManager": "pnpm@11.9.0",
   "type": "module",
   "scripts": {
-    "games": "node --env-file=.env src/steam-games.ts",
-    "serve": "node --env-file=.env src/server.ts",
+    "games": "node --env-file-if-exists=.env src/steam-games.ts",
+    "serve": "node --env-file-if-exists=.env src/server.ts",
     "test": "node --test test/*.test.ts"
   },
   "devEngines": {

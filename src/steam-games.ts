@@ -1,5 +1,8 @@
 import { pathToFileURL } from "node:url";
 
+import { getScriptConfig } from "./config.ts";
+export { SCRIPT_CONFIG, getScriptConfig } from "./config.ts";
+
 declare const process: {
   argv: string[];
   env: Record<string, string | undefined>;
@@ -265,60 +268,6 @@ export type SteamGamesDependencies = {
   sleep: (ms: number) => Promise<void>;
 };
 
-// Edit this block to change what `pnpm run games` returns.
-export const SCRIPT_CONFIG: ScriptConfig = {
-  country: "MY",
-  language: process.env.STEAM_LANG ?? "english",
-  euroApproximation: {
-    myrToEurRate: 0.2145,
-  },
-  requestPacing: {
-    searchDelayMs: 1000,
-    appDetailsDelayMs: 1500,
-    reviewSummaryDelayMs: 500,
-  },
-  retry: {
-    maxAttempts: 8,
-    baseDelayMs: 3000,
-    maxDelayMs: 120000,
-  },
-  start: 0,
-  pages: null,
-  limit: null,
-  maxCandidates: null,
-  concurrency: 1,
-  outputMode: "json",
-  outputFile: "steam-games.json",
-  outputRetention: {
-    enabled: true,
-    keepLast: 10,
-  },
-  progress: true,
-  verbose: true,
-  cache: {
-    enabled: true,
-    directory: ".cache/steam",
-    cleanupExpired: true,
-    searchTtlHours: 24,
-    appDetailsTtlHours: 24,
-    demoPageTtlHours: 168,
-    reviewSummaryTtlHours: 72,
-  },
-  filters: {
-    displayOnly: "Game",
-    minDiscount: 25,
-    minRating: 0,
-    minRelease: "2000-01-01",
-    minReviews: 500,
-    os: "mac",
-    sort: "demo_positive_desc",
-    includeTags: [],
-    excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
-    ignoreNames: ['Undertale', 'Hades', 'Soulstone Survivors','Nova Drift'],
-    term: "",
-  },
-};
-
 const USER_AGENT = "steam-db-ts-script/0.1 (+https://store.steampowered.com)";
 const SEARCH_PAGE_SIZE = 50;
 const requestQueues = new Map<RequestNamespace, Promise<void>>();
@@ -347,7 +296,7 @@ function resolveDependencies(dependencies: Partial<SteamGamesDependencies> = {})
 }
 
 export async function runSteamGames(
-  scriptConfig: ScriptConfig = SCRIPT_CONFIG,
+  scriptConfig: ScriptConfig = getScriptConfig(),
   dependencies: Partial<SteamGamesDependencies> = {}
 ): Promise<void> {
   const deps = resolveDependencies(dependencies);

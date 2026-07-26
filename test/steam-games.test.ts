@@ -10,6 +10,7 @@ import {
   compareGames,
   enrichCandidate,
   filterGame,
+  getScriptConfig,
   hasInstallLink,
   isDemoPageInstallable,
   normalizeFilters,
@@ -145,6 +146,61 @@ function textResponse(body) {
     },
   });
 }
+
+test("getScriptConfig applies environment overrides", () => {
+  const config = getScriptConfig({
+    STEAM_COUNTRY: "us",
+    STEAM_LANG: "german",
+    STEAM_MYR_TO_EUR_RATE: "0.2",
+    STEAM_PAGES: "all",
+    STEAM_LIMIT: "5",
+    STEAM_MAX_CANDIDATES: "10",
+    STEAM_CONCURRENCY: "2",
+    STEAM_GAMES_OUTPUT_FILE: "stdout",
+    STEAM_VERBOSE: "false",
+    STEAM_CACHE_ENABLED: "false",
+    STEAM_CACHE_SEARCH_TTL_HOURS: "12",
+    STEAM_REQUEST_APP_DETAILS_DELAY_MS: "250",
+    STEAM_RETRY_MAX_ATTEMPTS: "3",
+    STEAM_FILTER_MIN_DISCOUNT: "40",
+    STEAM_FILTER_OS: "all",
+    STEAM_FILTER_SORT: "positive_desc",
+    STEAM_FILTER_INCLUDE_TAGS: "19,21,",
+    STEAM_FILTER_EXCLUDE_TAGS: "-1625,1664",
+    STEAM_FILTER_IGNORE_NAMES: "Hades, Undertale",
+    STEAM_FILTER_TERM: "farm",
+  });
+
+  assert.equal(config.country, "us");
+  assert.equal(config.language, "german");
+  assert.equal(config.euroApproximation.myrToEurRate, 0.2);
+  assert.equal(config.pages, null);
+  assert.equal(config.limit, 5);
+  assert.equal(config.maxCandidates, 10);
+  assert.equal(config.concurrency, 2);
+  assert.equal(config.outputFile, null);
+  assert.equal(config.verbose, false);
+  assert.equal(config.cache.enabled, false);
+  assert.equal(config.cache.searchTtlHours, 12);
+  assert.equal(config.requestPacing.appDetailsDelayMs, 250);
+  assert.equal(config.retry.maxAttempts, 3);
+  assert.equal(config.filters.minDiscount, 40);
+  assert.equal(config.filters.os, "");
+  assert.equal(config.filters.sort, "positive_desc");
+  assert.deepEqual(config.filters.includeTags, [19, 21]);
+  assert.deepEqual(config.filters.excludeTags, [-1625, 1664]);
+  assert.deepEqual(config.filters.ignoreNames, ["Hades", "Undertale"]);
+  assert.equal(config.filters.term, "farm");
+
+  assert.equal(SCRIPT_CONFIG.country, "MY");
+  assert.equal(SCRIPT_CONFIG.outputFile, "steam-games.json");
+});
+
+test("getScriptConfig rejects invalid environment values", () => {
+  assert.throws(() => getScriptConfig({ STEAM_LIMIT: "2.5" }), /STEAM_LIMIT must be an integer/);
+  assert.throws(() => getScriptConfig({ STEAM_FILTER_SORT: "popular" }), /STEAM_FILTER_SORT must be one of/);
+  assert.throws(() => getScriptConfig({ STEAM_PROGRESS: "maybe" }), /STEAM_PROGRESS must be true or false/);
+});
 
 test("buildSearchUrl includes the initial Steam search params", () => {
   const scriptConfig = makeScriptConfig();

@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { SCRIPT_CONFIG, runSteamGames, type ScriptConfig } from "./steam-games.ts";
+import { getScriptConfig, runSteamGames, type ScriptConfig } from "./steam-games.ts";
 
 declare const process: {
   argv: string[];
@@ -35,10 +35,14 @@ const DEFAULT_DOCKER_CACHE_DIR = "/data/.cache/steam";
 const DEFAULT_INTERVAL_HOURS = 24;
 
 export function buildServerConfig(env: Record<string, string | undefined> = process.env): ServerConfig {
-  const scriptConfig = structuredClone(SCRIPT_CONFIG);
+  const scriptConfig = getScriptConfig(env);
 
-  scriptConfig.outputFile = env.STEAM_GAMES_OUTPUT_FILE ?? defaultOutputFile(env);
-  scriptConfig.cache.directory = env.STEAM_GAMES_CACHE_DIR ?? defaultCacheDirectory(env);
+  if (env.STEAM_GAMES_DOCKER === "1" && env.STEAM_GAMES_OUTPUT_FILE === undefined) {
+    scriptConfig.outputFile = DEFAULT_DOCKER_OUTPUT_FILE;
+  }
+  if (env.STEAM_GAMES_DOCKER === "1" && env.STEAM_GAMES_CACHE_DIR === undefined) {
+    scriptConfig.cache.directory = DEFAULT_DOCKER_CACHE_DIR;
+  }
 
   return {
     host: env.HOST ?? "0.0.0.0",
@@ -233,14 +237,6 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
     "cache-control": "no-store",
   });
   response.end(`${JSON.stringify(body, null, 2)}\n`);
-}
-
-function defaultOutputFile(env: Record<string, string | undefined>): string {
-  return env.STEAM_GAMES_DOCKER === "1" ? DEFAULT_DOCKER_OUTPUT_FILE : SCRIPT_CONFIG.outputFile ?? "steam-games.json";
-}
-
-function defaultCacheDirectory(env: Record<string, string | undefined>): string {
-  return env.STEAM_GAMES_DOCKER === "1" ? DEFAULT_DOCKER_CACHE_DIR : SCRIPT_CONFIG.cache.directory;
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
