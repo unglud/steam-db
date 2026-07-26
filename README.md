@@ -70,6 +70,7 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `verbose`: print detailed trace logs for cache, requests, candidates, filtering, and output
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
 - `outputFile`: result file path, or `null` for stdout
+- `outputRetention`: delete old result files after a successful run
 - `cache`: disk cache settings
 - `cache.cleanupExpired`: delete expired cache JSON files at startup
 
@@ -85,6 +86,6 @@ Cache files are written under `.cache/steam`.
 
 Expired cache files are deleted at startup when `cache.cleanupExpired` is `true`.
 
-Existing output files are never overwritten. If `steam-games.json` exists, the script writes `steam-games-1.json`, then `steam-games-2.json`, and so on.
+Existing output files are never overwritten. For `outputFile: "steam-games.json"`, each run writes a timestamped file like `steam-games-2026-07-26T14-32-02-725Z.json`. When `outputRetention.enabled` is `true`, the script keeps the newest `outputRetention.keepLast` matching result files and deletes older ones after a successful run.
 
 Steam may throttle app detail requests when scanning many pages. The script spaces fresh requests, retries 429 responses with backoff, and reports any candidates that still fail in `warnings`. If that happens, wait a bit and run `pnpm run games` again; cached successful requests are reused, so reruns mostly fill the missing app details.

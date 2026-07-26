@@ -35,6 +35,7 @@ type RuntimeConfig = {
   retry: RetryConfig;
   outputMode: OutputMode;
   outputFile: string | null;
+  outputRetention: OutputRetentionConfig;
   progress: boolean;
   verbose: boolean;
   cache: CacheConfig;
@@ -71,6 +72,11 @@ type RetryConfig = {
   maxAttempts: number;
   baseDelayMs: number;
   maxDelayMs: number;
+};
+
+type OutputRetentionConfig = {
+  enabled: boolean;
+  keepLast: number;
 };
 
 type CacheConfig = {
@@ -253,6 +259,10 @@ const SCRIPT_CONFIG: ScriptConfig = {
   concurrency: 1,
   outputMode: "json",
   outputFile: "steam-games.json",
+  outputRetention: {
+    enabled: true,
+    keepLast: 10,
+  },
   progress: true,
   verbose: true,
   cache: {
@@ -297,6 +307,7 @@ async function main(): Promise<void> {
   const filters = normalizeFilters(SCRIPT_CONFIG.filters);
   const outputWriter = await createOutputWriter(config);
   const warnings: string[] = [];
+  let completed = false;
 
   try {
     logProgress(config, "Starting Steam search.");
@@ -442,8 +453,12 @@ async function main(): Promise<void> {
     if (outputWriter.path !== null) {
       logProgress(config, `Finished writing ${outputWriter.path}.`);
     }
+    completed = true;
   } finally {
     await outputWriter.close();
+    if (completed && outputWriter.path !== null) {
+      await cleanupOldOutputFiles(config, outputWriter.path);
+    }
   }
 }
 
@@ -467,8 +482,9 @@ async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> 
     await mkdir(outputDir, { recursive: true });
   }
 
+  const timestamp = outputTimestamp(new Date());
   for (let attempt = 0; attempt < 1000; attempt += 1) {
-    const path = withNumericSuffix(config.outputFile, attempt, { basename, dirname, extname, join });
+    const path = withTimestampSuffix(config.outputFile, timestamp, attempt, { basename, dirname, extname, join });
     try {
       logVerbose(config, `Attempting to create output file ${path}.`);
       const file = await open(path, "wx");
@@ -498,8 +514,9 @@ async function createOutputWriter(config: RuntimeConfig): Promise<OutputWriter> 
   throw new Error(`Could not create a non-existing output file for ${config.outputFile}.`);
 }
 
-function withNumericSuffix(
+function withTimestampSuffix(
   filePath: string,
+  timestamp: string,
   suffixNumber: number,
   pathTools: {
     basename(path: string, suffix?: string): string;
@@ -508,13 +525,109 @@ function withNumericSuffix(
     join(...paths: string[]): string;
   }
 ): string {
-  if (suffixNumber === 0) return filePath;
-
   const dir = pathTools.dirname(filePath);
   const ext = pathTools.extname(filePath);
   const name = pathTools.basename(filePath, ext);
-  const suffixedFile = `${name}-${suffixNumber}${ext}`;
+  const collisionSuffix = suffixNumber === 0 ? "" : `-${suffixNumber}`;
+  const suffixedFile = `${name}-${timestamp}${collisionSuffix}${ext}`;
   return dir === "." ? suffixedFile : pathTools.join(dir, suffixedFile);
+}
+
+function outputTimestamp(date: Date): string {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+async function cleanupOldOutputFiles(config: RuntimeConfig, currentOutputPath: string): Promise<void> {
+  if (config.outputFile === null || !config.outputRetention.enabled) {
+    logVerbose(config, "Output retention cleanup disabled.");
+    return;
+  }
+
+  const { readdir, stat, unlink } = await import("node:fs/promises");
+  const { basename, dirname, extname, join, resolve } = await import("node:path");
+  const outputDir = dirname(config.outputFile);
+  const ext = extname(config.outputFile);
+  const baseName = basename(config.outputFile, ext);
+  const currentResolvedPath = resolve(currentOutputPath);
+  const entries = await readdir(outputDir === "." ? "." : outputDir, { withFileTypes: true });
+  const outputFiles = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !matchesOutputFileName(entry.name, baseName, ext)) continue;
+
+    const path = join(outputDir, entry.name);
+    const stats = await stat(path);
+    outputFiles.push({
+      path,
+      resolvedPath: resolve(path),
+      name: entry.name,
+      sortTime: outputFileSortTime(entry.name, baseName, ext, stats.mtimeMs),
+    });
+  }
+
+  outputFiles.sort((a, b) => {
+    if (a.resolvedPath === currentResolvedPath) return -1;
+    if (b.resolvedPath === currentResolvedPath) return 1;
+    return b.sortTime - a.sortTime || b.name.localeCompare(a.name);
+  });
+
+  const keep = new Set(outputFiles.slice(0, config.outputRetention.keepLast).map((file) => file.resolvedPath));
+  keep.add(currentResolvedPath);
+  const removable = outputFiles.filter((file) => !keep.has(file.resolvedPath));
+
+  if (removable.length === 0) {
+    logVerbose(
+      config,
+      `Output retention kept ${outputFiles.length}/${outputFiles.length} matching file(s); nothing to delete.`
+    );
+    return;
+  }
+
+  for (const file of removable) {
+    try {
+      await unlink(file.path);
+      logVerbose(config, `Deleted old output file ${file.path}.`);
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) throw error;
+    }
+  }
+
+  logProgress(
+    config,
+    `Output retention removed ${removable.length} old file(s); kept newest ${Math.min(
+      config.outputRetention.keepLast,
+      outputFiles.length
+    )} matching ${baseName}*${ext} file(s).`
+  );
+}
+
+function matchesOutputFileName(fileName: string, baseName: string, ext: string): boolean {
+  return fileName === `${baseName}${ext}` || (fileName.startsWith(`${baseName}-`) && fileName.endsWith(ext));
+}
+
+function outputFileSortTime(fileName: string, baseName: string, ext: string, fallbackTime: number): number {
+  const timestamp = outputFileTimestamp(fileName, baseName, ext);
+  return timestamp ?? fallbackTime;
+}
+
+function outputFileTimestamp(fileName: string, baseName: string, ext: string): number | null {
+  const prefix = `${baseName}-`;
+  if (!fileName.startsWith(prefix) || !fileName.endsWith(ext)) return null;
+
+  const withoutPrefix = fileName.slice(prefix.length, fileName.length - ext.length);
+  const match = withoutPrefix.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-\d+)?$/);
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second, millisecond] = match;
+  return Date.UTC(
+    Number.parseInt(year, 10),
+    Number.parseInt(month, 10) - 1,
+    Number.parseInt(day, 10),
+    Number.parseInt(hour, 10),
+    Number.parseInt(minute, 10),
+    Number.parseInt(second, 10),
+    Number.parseInt(millisecond, 10)
+  );
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {
@@ -542,6 +655,12 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   }
   if (config.outputFile !== null && config.outputFile.trim() === "") {
     throw new Error("SCRIPT_CONFIG.outputFile must be a file path string or null.");
+  }
+  if (typeof config.outputRetention.enabled !== "boolean") {
+    throw new Error("SCRIPT_CONFIG.outputRetention.enabled must be true or false.");
+  }
+  if (!Number.isInteger(config.outputRetention.keepLast) || config.outputRetention.keepLast < 1) {
+    throw new Error("SCRIPT_CONFIG.outputRetention.keepLast must be a positive integer.");
   }
   if (typeof config.progress !== "boolean") {
     throw new Error("SCRIPT_CONFIG.progress must be true or false.");
@@ -599,6 +718,7 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     retry: config.retry,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
+    outputRetention: config.outputRetention,
     progress: config.progress,
     verbose: config.verbose,
     cache: config.cache,
@@ -1309,6 +1429,7 @@ function serializableOptions(config: RuntimeConfig) {
     retry: config.retry,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
+    outputRetention: config.outputRetention,
     progress: config.progress,
     verbose: config.verbose,
     cache: config.cache,
