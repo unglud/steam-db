@@ -20,11 +20,11 @@ Each item in `games` keeps the basic Steam identity at the top level:
   "appid": 1145350,
   "name": "Hades II",
   "steamUrl": "https://store.steampowered.com/app/1145350/",
-  "enriched": {
-    "price": {},
-    "reviews": {},
-    "platforms": {}
-  }
+  "releaseDate": "Sep 25, 2025",
+  "price": {},
+  "reviews": {},
+  "recommendations": 112725,
+  "genres": []
 }
 ```
 
@@ -40,7 +40,9 @@ Each item in `games` keeps the basic Steam identity at the top level:
 - `includeTags: [19]`
 - `excludeTags: [1625, 1664]`
 
-`os=applesilicon` is mapped to Steam's public `mac` search filter. The public Steam store APIs expose Mac support, but not a reliable Apple Silicon-native flag, so each result includes an `appleSilicon` hint derived from macOS requirement text when Steam provides it.
+`os=applesilicon` is mapped to Steam's public `mac` search filter. The public Steam store APIs expose Mac support, but not a reliable Apple Silicon-native flag.
+
+Games marked with Steam genre `{ "id": "70", "description": "Early Access" }` are filtered out.
 
 Useful runtime fields in `SCRIPT_CONFIG`:
 

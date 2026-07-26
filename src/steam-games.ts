@@ -98,10 +98,8 @@ type PriceOverview = {
 };
 
 type StoreDetails = {
-  type?: string;
   name?: string;
   steam_appid?: number;
-  is_free?: boolean;
   price_overview?: PriceOverview;
   platforms?: {
     windows?: boolean;
@@ -112,19 +110,10 @@ type StoreDetails = {
     coming_soon?: boolean;
     date?: string;
   };
-  metacritic?: {
-    score?: number;
-    url?: string;
-  };
   recommendations?: {
     total?: number;
   };
   genres?: Array<{ id?: string; description?: string }>;
-  categories?: Array<{ id?: number; description?: string }>;
-  mac_requirements?: {
-    minimum?: string;
-    recommended?: string;
-  };
 };
 
 type AppDetailsResponse = Record<
@@ -153,51 +142,49 @@ type Candidate = {
   name?: string;
 };
 
-type EnrichedGameData = {
-  type: string;
-  releaseDate: string | null;
-  releaseTimestamp: number | null;
-  platforms: {
-    windows: boolean;
-    mac: boolean;
-    linux: boolean;
-  };
-  appleSilicon: {
-    requested: boolean;
-    publicSteamFilter: "mac" | null;
-    requirementHint: "mentioned" | "not_mentioned" | "unknown";
-  };
-  price: {
-    currency: string | null;
-    initial: number | null;
-    final: number | null;
-    discountPercent: number;
-    initialFormatted: string | null;
-    finalFormatted: string | null;
-  };
-  reviews: {
-    score: number | null;
-    scoreDescription: string | null;
-    total: number;
-    positive: number;
-    negative: number;
-    positivePercent: number | null;
-  };
-  metacritic: {
-    score: number | null;
-    url: string | null;
-  };
-  recommendations: number | null;
-  genres: Array<{ id: string | null; description: string | null }>;
-  categories: Array<{ id: number | null; description: string | null }>;
+type GamePrice = {
+  currency: string | null;
+  initial: number | null;
+  final: number | null;
+  discountPercent: number;
+  initialFormatted: string | null;
+  finalFormatted: string | null;
+};
+
+type GameReviews = {
+  score: number | null;
+  scoreDescription: string | null;
+  total: number;
+  positive: number;
+  negative: number;
+  positivePercent: number | null;
+};
+
+type GameGenre = {
+  id: string | null;
+  description: string | null;
 };
 
 type GameResult = {
   appid: number;
   name: string;
   steamUrl: string;
-  enriched: EnrichedGameData;
+  releaseDate: string | null;
+  price: GamePrice;
+  reviews: GameReviews;
+  recommendations: number | null;
+  genres: GameGenre[];
+  internal: {
+    releaseTimestamp: number | null;
+    platforms: {
+      windows: boolean;
+      mac: boolean;
+      linux: boolean;
+    };
+  };
 };
+
+type SerializableGameResult = Omit<GameResult, "internal">;
 
 // Edit this block to change what `pnpm run games` returns.
 const SCRIPT_CONFIG: ScriptConfig = {
@@ -239,14 +226,9 @@ const DETAIL_FILTERS = [
   "release_date",
   "platforms",
   "recommendations",
-  "metacritic",
-  "type",
   "name",
   "steam_appid",
-  "is_free",
-  "categories",
   "genres",
-  "mac_requirements",
 ].join(",");
 
 async function main(): Promise<void> {
@@ -266,31 +248,31 @@ async function main(): Promise<void> {
 
     if (filters.os === "applesilicon") {
       warnings.push(
-        "Steam's public store APIs expose macOS filtering, but not a reliable Apple Silicon-native flag; this query uses os=mac and returns a best-effort macOS requirement hint."
+        "Steam's public store APIs expose macOS filtering, but not a reliable Apple Silicon-native flag; this query uses os=mac."
       );
     }
 
     const discoveredCandidates = await fetchSearchCandidates(filters, config);
     const candidates =
       config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
-    logProgress(config, `Discovered ${discoveredCandidates.length} candidate(s); enriching ${candidates.length}.`);
+    logProgress(config, `Discovered ${discoveredCandidates.length} candidate(s); processing ${candidates.length}.`);
 
     const skippedCandidates: string[] = [];
-    let enrichedCandidates = 0;
+    let processedCandidates = 0;
     const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
       try {
-        const game = await enrichCandidate(candidate, config, filters);
+        const game = await enrichCandidate(candidate, config);
         if (config.outputMode === "ndjson" && game !== null && matchesFilters(game, filters)) {
-          await outputWriter.write(`${JSON.stringify({ type: "game", game })}\n`);
+          await outputWriter.write(`${JSON.stringify(serializeGame(game))}\n`);
         }
         return game;
       } catch (error) {
         skippedCandidates.push(`${candidate.appid}: ${errorMessage(error).split("\n")[0]}`);
         return null;
       } finally {
-        enrichedCandidates += 1;
-        if (enrichedCandidates === candidates.length || enrichedCandidates % 25 === 0) {
-          logProgress(config, `Enriched ${enrichedCandidates}/${candidates.length} candidate(s).`);
+        processedCandidates += 1;
+        if (processedCandidates === candidates.length || processedCandidates % 25 === 0) {
+          logProgress(config, `Processed ${processedCandidates}/${candidates.length} candidate(s).`);
         }
       }
     });
@@ -308,6 +290,7 @@ async function main(): Promise<void> {
       .filter((game) => matchesFilters(game, filters))
       .sort((a, b) => compareGames(a, b, filters.sort));
     const returnedGames = config.limit === null ? filtered : filtered.slice(0, config.limit);
+    const outputGames = returnedGames.map(serializeGame);
 
     const output = {
       generatedAt: new Date().toISOString(),
@@ -318,7 +301,7 @@ async function main(): Promise<void> {
       options: serializableOptions(config),
       filters: serializableFilters(filters),
       warnings,
-      games: returnedGames,
+      games: outputGames,
     };
 
     if (config.outputMode === "json") {
@@ -581,7 +564,7 @@ function extractAppId(logo: string): number | null {
   return Number.isFinite(appid) ? appid : null;
 }
 
-async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filters: Filters): Promise<GameResult | null> {
+async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Promise<GameResult | null> {
   const [details, reviews] = await Promise.all([
     fetchAppDetails(candidate.appid, config),
     fetchReviewSummary(candidate.appid, config),
@@ -594,7 +577,6 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filt
   const positive = reviews.total_positive ?? 0;
   const negative = reviews.total_negative ?? 0;
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
-  const inferredType = details.type ?? (filters.displayOnly.toLowerCase() === "game" ? "game" : "unknown");
   const platforms = {
     windows: details.platforms?.windows ?? false,
     mac: details.platforms?.mac ?? false,
@@ -605,46 +587,54 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filt
     appid: details.steam_appid ?? candidate.appid,
     name: details.name ?? candidate.name ?? String(candidate.appid),
     steamUrl: `https://store.steampowered.com/app/${candidate.appid}/`,
-    enriched: {
-      type: inferredType,
-      releaseDate: details.release_date?.date ?? null,
+    releaseDate: details.release_date?.date ?? null,
+    price: {
+      currency: price?.currency ?? null,
+      initial: price?.initial ?? null,
+      final: price?.final ?? null,
+      discountPercent: price?.discount_percent ?? 0,
+      initialFormatted: price?.initial_formatted ?? null,
+      finalFormatted: price?.final_formatted ?? null,
+    },
+    reviews: {
+      score: reviews.review_score ?? null,
+      scoreDescription: reviews.review_score_desc ?? null,
+      total: reviewTotal,
+      positive,
+      negative,
+      positivePercent: reviewTotal > 0 ? roundPercent((positive / reviewTotal) * 100) : null,
+    },
+    recommendations: details.recommendations?.total ?? null,
+    genres: (details.genres ?? []).map((genre) => ({
+      id: genre.id ?? null,
+      description: genre.description ?? null,
+    })),
+    internal: {
       releaseTimestamp: releaseTime,
       platforms,
-      appleSilicon: {
-        requested: filters.os === "applesilicon",
-        publicSteamFilter: filters.os === "applesilicon" ? "mac" : null,
-        requirementHint: detectAppleSiliconHint(details),
-      },
-      price: {
-        currency: price?.currency ?? null,
-        initial: price?.initial ?? null,
-        final: price?.final ?? null,
-        discountPercent: price?.discount_percent ?? 0,
-        initialFormatted: price?.initial_formatted ?? null,
-        finalFormatted: price?.final_formatted ?? null,
-      },
-      reviews: {
-        score: reviews.review_score ?? null,
-        scoreDescription: reviews.review_score_desc ?? null,
-        total: reviewTotal,
-        positive,
-        negative,
-        positivePercent: reviewTotal > 0 ? roundPercent((positive / reviewTotal) * 100) : null,
-      },
-      metacritic: {
-        score: details.metacritic?.score ?? null,
-        url: details.metacritic?.url ?? null,
-      },
-      recommendations: details.recommendations?.total ?? null,
-      genres: (details.genres ?? []).map((genre) => ({
-        id: genre.id ?? null,
-        description: genre.description ?? null,
-      })),
-      categories: (details.categories ?? []).map((category) => ({
-        id: category.id ?? null,
-        description: category.description ?? null,
-      })),
     },
+  };
+}
+
+function serializeGame({
+  appid,
+  name,
+  steamUrl,
+  releaseDate,
+  price,
+  reviews,
+  recommendations,
+  genres,
+}: GameResult): SerializableGameResult {
+  return {
+    appid,
+    name,
+    steamUrl,
+    releaseDate,
+    price,
+    reviews,
+    recommendations,
+    genres,
   };
 }
 
@@ -799,30 +789,34 @@ function errorMessage(error: unknown): string {
 }
 
 function matchesFilters(game: GameResult, filters: Filters): boolean {
-  if (filters.displayOnly.toLowerCase() === "game" && game.enriched.type !== "game") return false;
-  if (game.enriched.price.discountPercent < filters.minDiscount) return false;
-  if (game.enriched.reviews.total < filters.minReviews) return false;
-  if ((game.enriched.reviews.positivePercent ?? 0) < filters.minRating) return false;
-  if (game.enriched.releaseTimestamp !== null && game.enriched.releaseTimestamp < filters.minReleaseTime) return false;
+  if (hasEarlyAccessGenre(game)) return false;
+  if (game.price.discountPercent < filters.minDiscount) return false;
+  if (game.reviews.total < filters.minReviews) return false;
+  if ((game.reviews.positivePercent ?? 0) < filters.minRating) return false;
+  if (game.internal.releaseTimestamp !== null && game.internal.releaseTimestamp < filters.minReleaseTime) return false;
 
-  if (filters.os === "win" && !game.enriched.platforms.windows) return false;
-  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.enriched.platforms.mac) return false;
-  if (filters.os === "linux" && !game.enriched.platforms.linux) return false;
+  if (filters.os === "win" && !game.internal.platforms.windows) return false;
+  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.internal.platforms.mac) return false;
+  if (filters.os === "linux" && !game.internal.platforms.linux) return false;
 
   return true;
 }
 
+function hasEarlyAccessGenre(game: GameResult): boolean {
+  return game.genres.some((genre) => genre.id === "70" || genre.description?.toLowerCase() === "early access");
+}
+
 function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
-  if (sort === "discount_asc") return ascending(a.enriched.price.discountPercent, b.enriched.price.discountPercent) || byName(a, b);
-  if (sort === "discount_desc") return descending(a.enriched.price.discountPercent, b.enriched.price.discountPercent) || byName(a, b);
-  if (sort === "rating_asc") return ascending(a.enriched.reviews.positivePercent ?? -1, b.enriched.reviews.positivePercent ?? -1) || byName(a, b);
-  if (sort === "rating_desc") return descending(a.enriched.reviews.positivePercent ?? -1, b.enriched.reviews.positivePercent ?? -1) || byName(a, b);
-  if (sort === "reviews_asc") return ascending(a.enriched.reviews.total, b.enriched.reviews.total) || byName(a, b);
-  if (sort === "reviews_desc") return descending(a.enriched.reviews.total, b.enriched.reviews.total) || byName(a, b);
-  if (sort === "release_asc") return ascending(a.enriched.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.enriched.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
-  if (sort === "release_desc") return descending(a.enriched.releaseTimestamp ?? 0, b.enriched.releaseTimestamp ?? 0) || byName(a, b);
-  if (sort === "price_asc") return ascending(a.enriched.price.final ?? Number.MAX_SAFE_INTEGER, b.enriched.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
-  if (sort === "price_desc") return descending(a.enriched.price.final ?? -1, b.enriched.price.final ?? -1) || byName(a, b);
+  if (sort === "discount_asc") return ascending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
+  if (sort === "discount_desc") return descending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
+  if (sort === "rating_asc") return ascending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
+  if (sort === "rating_desc") return descending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
+  if (sort === "reviews_asc") return ascending(a.reviews.total, b.reviews.total) || byName(a, b);
+  if (sort === "reviews_desc") return descending(a.reviews.total, b.reviews.total) || byName(a, b);
+  if (sort === "release_asc") return ascending(a.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
+  if (sort === "release_desc") return descending(a.internal.releaseTimestamp ?? 0, b.internal.releaseTimestamp ?? 0) || byName(a, b);
+  if (sort === "price_asc") return ascending(a.price.final ?? Number.MAX_SAFE_INTEGER, b.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
+  if (sort === "price_desc") return descending(a.price.final ?? -1, b.price.final ?? -1) || byName(a, b);
 
   return byName(a, b);
 }
@@ -852,25 +846,6 @@ function parseSteamReleaseDate(value: string | null): number | null {
   }
 
   return null;
-}
-
-function detectAppleSiliconHint(details: StoreDetails): "mentioned" | "not_mentioned" | "unknown" {
-  const requirements = [details.mac_requirements?.minimum, details.mac_requirements?.recommended]
-    .filter((value): value is string => Boolean(value))
-    .map(stripHtml)
-    .join(" ")
-    .toLowerCase();
-
-  if (!requirements) return "unknown";
-  if (/\b(apple silicon|arm64|aarch64|m[1-9](\s|-)?(pro|max|ultra)?)\b/.test(requirements)) {
-    return "mentioned";
-  }
-
-  return "not_mentioned";
-}
-
-function stripHtml(value: string): string {
-  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function roundPercent(value: number): number {
