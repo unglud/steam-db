@@ -87,6 +87,7 @@ type CacheConfig = {
   cleanupExpired: boolean;
   searchTtlHours: number;
   appDetailsTtlHours: number;
+  demoPageTtlHours: number;
   reviewSummaryTtlHours: number;
 };
 
@@ -169,7 +170,7 @@ type ReviewResponse = {
   query_summary?: ReviewSummary;
 };
 
-type RequestNamespace = "search" | "appdetails" | "reviews";
+type RequestNamespace = "search" | "appdetails" | "reviews" | "demopage";
 
 type Candidate = {
   appid: number;
@@ -289,6 +290,7 @@ const SCRIPT_CONFIG: ScriptConfig = {
     cleanupExpired: true,
     searchTtlHours: 24,
     appDetailsTtlHours: 24,
+    demoPageTtlHours: 168,
     reviewSummaryTtlHours: 72,
   },
   filters: {
@@ -697,6 +699,9 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (!isPositiveNumber(config.cache.appDetailsTtlHours)) {
     throw new Error("SCRIPT_CONFIG.cache.appDetailsTtlHours must be a positive number.");
   }
+  if (!isPositiveNumber(config.cache.demoPageTtlHours)) {
+    throw new Error("SCRIPT_CONFIG.cache.demoPageTtlHours must be a positive number.");
+  }
   if (!isPositiveNumber(config.cache.reviewSummaryTtlHours)) {
     throw new Error("SCRIPT_CONFIG.cache.reviewSummaryTtlHours must be a positive number.");
   }
@@ -933,7 +938,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
   const reviewTotal = reviews.total_reviews ?? 0;
   const positive = reviews.total_positive ?? 0;
   const negative = reviews.total_negative ?? 0;
-  const demoAvailable = (details.demos?.length ?? 0) > 0;
+  const demoAvailable = await hasAvailableDemo(details, config);
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
   const platforms = {
     windows: details.platforms?.windows ?? false,
@@ -978,6 +983,47 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
       platforms,
     },
   };
+}
+
+async function hasAvailableDemo(details: StoreDetails, config: RuntimeConfig): Promise<boolean> {
+  const demos = (details.demos ?? [])
+    .map((demo) => demo.appid)
+    .filter((appid): appid is number => typeof appid === "number" && Number.isFinite(appid));
+
+  if (demos.length === 0) {
+    return false;
+  }
+
+  logVerbose(config, `Checking ${demos.length} demo page(s) for ${details.steam_appid ?? details.name ?? "unknown app"}.`);
+  for (const demoAppid of demos) {
+    try {
+      if (await isDemoPageInstallable(demoAppid, config)) {
+        logVerbose(config, `Demo ${demoAppid} is installable.`);
+        return true;
+      }
+      logVerbose(config, `Demo ${demoAppid} is not installable from its store page.`);
+    } catch (error) {
+      logVerbose(config, `Could not verify demo ${demoAppid}: ${errorMessage(error).split("\n")[0]}.`);
+    }
+  }
+
+  return false;
+}
+
+async function isDemoPageInstallable(appid: number, config: RuntimeConfig): Promise<boolean> {
+  const url = new URL(`https://store.steampowered.com/app/${appid}/`);
+  logVerbose(config, `Preparing demo page availability request for ${appid}: ${redactUrl(url)}.`);
+
+  return fetchCachedJson<boolean>(
+    config,
+    "demopage",
+    url.toString(),
+    hoursToMs(config.cache.demoPageTtlHours),
+    async () => {
+      const html = await fetchText(url, config);
+      return hasInstallLink(html, appid);
+    }
+  );
 }
 
 function serializeGame({
@@ -1120,7 +1166,7 @@ async function waitForRequestSlot(namespace: RequestNamespace, config: RuntimeCo
 
 function requestDelayMs(namespace: RequestNamespace, config: RuntimeConfig): number {
   if (namespace === "search") return config.requestPacing.searchDelayMs;
-  if (namespace === "appdetails") return config.requestPacing.appDetailsDelayMs;
+  if (namespace === "appdetails" || namespace === "demopage") return config.requestPacing.appDetailsDelayMs;
   return config.requestPacing.reviewSummaryDelayMs;
 }
 
@@ -1258,6 +1304,49 @@ async function fetchJson<T>(url: URL, config: RuntimeConfig, attempt = 0): Promi
   return (await response.json()) as T;
 }
 
+async function fetchText(url: URL, config: RuntimeConfig, attempt = 0): Promise<string> {
+  let response: Response;
+  try {
+    logVerbose(config, `HTTP GET ${redactUrl(url)} (attempt ${attempt + 1}/${config.retry.maxAttempts}).`);
+    response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+  } catch (error) {
+    if (attempt + 1 < config.retry.maxAttempts) {
+      const delayMs = retryDelayMs(null, attempt, config.retry);
+      logProgress(
+        config,
+        `Steam request failed before response; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
+      );
+      await sleep(delayMs);
+      return fetchText(url, config, attempt + 1);
+    }
+
+    throw error;
+  }
+
+  logVerbose(config, `HTTP ${response.status} ${response.statusText} for ${redactUrl(url)}.`);
+  if (!response.ok) {
+    const body = await response.text();
+    if (shouldRetry(response.status) && attempt + 1 < config.retry.maxAttempts) {
+      const delayMs = retryDelayMs(response, attempt, config.retry);
+      logProgress(
+        config,
+        `Steam request returned ${response.status}; retrying in ${formatDuration(delayMs)} (${attempt + 2}/${config.retry.maxAttempts}).`
+      );
+      await sleep(delayMs);
+      return fetchText(url, config, attempt + 1);
+    }
+
+    throw new Error(`Steam request failed: ${response.status} ${response.statusText} ${redactUrl(url)}\n${body.slice(0, 300)}`);
+  }
+
+  return response.text();
+}
+
 function shouldRetry(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
@@ -1346,6 +1435,10 @@ function filterGame(game: GameResult, filters: Filters): FilterDecision {
 
 function hasEarlyAccessGenre(game: GameResult): boolean {
   return game.genres.some((genre) => genre.id === "70" || genre.description?.toLowerCase() === "early access");
+}
+
+function hasInstallLink(html: string, appid: number): boolean {
+  return html.includes(`steam://install/${appid}`) || new RegExp(`InstallGame\\(\\s*${appid}\\b`).test(html);
 }
 
 function normalizeGameName(name: string): string {

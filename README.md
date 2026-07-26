@@ -50,6 +50,8 @@ Each item in `games` keeps the basic Steam identity at the top level:
 
 Games marked with Steam genre `{ "id": "70", "description": "Early Access" }` are filtered out.
 
+`demoAvailable` is only `true` when Steam appdetails lists a demo and the demo app's own store page exposes an install link. This filters out stale hidden demos that remain in Steam API data.
+
 Useful runtime fields in `SCRIPT_CONFIG`:
 
 - `limit`: maximum returned games, or `null` for all
@@ -76,6 +78,7 @@ Cache defaults:
 
 - Steam search pages: 24 hours
 - App details, including price/discount: 24 hours
+- Demo page availability checks: 1 week
 - Review summaries: 3 days
 
 Cache files are written under `.cache/steam`.
