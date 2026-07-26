@@ -22,8 +22,8 @@ type PlatformName = "win" | "mac" | "linux" | "applesilicon" | "";
 
 type CliConfig = {
   query: string;
-  limit: number;
-  pages: number;
+  limit: number | null;
+  pages: number | null;
   maxCandidates: number | null;
   start: number;
   concurrency: number;
@@ -233,18 +233,19 @@ async function main(): Promise<void> {
   const filtered = games
     .filter((game): game is GameResult => game !== null)
     .filter((game) => matchesFilters(game, filters))
-    .sort((a, b) => compareGames(a, b, filters.sort))
-    .slice(0, config.limit);
+    .sort((a, b) => compareGames(a, b, filters.sort));
+  const returnedGames = config.limit === null ? filtered : filtered.slice(0, config.limit);
 
   const output = {
     generatedAt: new Date().toISOString(),
     source: config.source,
     discoveredCandidates: discoveredCandidates.length,
     scannedCandidates: candidates.length,
-    returned: filtered.length,
+    returned: returnedGames.length,
+    options: serializableOptions(config),
     filters: serializableFilters(filters),
     warnings,
-    games: filtered,
+    games: returnedGames,
   };
 
   console.log(JSON.stringify(output, null, 2));
@@ -255,8 +256,8 @@ function parseCli(args: string[]): CliConfig {
   const overrides = new URLSearchParams();
   const config: CliConfig = {
     query,
-    limit: 25,
-    pages: 1,
+    limit: null,
+    pages: null,
     maxCandidates: null,
     start: 0,
     concurrency: 2,
@@ -267,6 +268,12 @@ function parseCli(args: string[]): CliConfig {
 
   for (const arg of args) {
     if (arg === "--") continue;
+    if (arg === "--all") {
+      config.limit = null;
+      config.pages = null;
+      config.maxCandidates = null;
+      continue;
+    }
 
     if (!arg.startsWith("--")) {
       query = arg;
@@ -277,9 +284,9 @@ function parseCli(args: string[]): CliConfig {
     const key = normalizeCliKey(rawKey);
     const value = rawValue.trim();
 
-    if (key === "limit") config.limit = readInteger(value, "limit", 1, 500);
-    else if (key === "pages") config.pages = readInteger(value, "pages", 1, 100);
-    else if (key === "max_candidates") config.maxCandidates = readInteger(value, "max-candidates", 1, 10000);
+    if (key === "limit") config.limit = readOptionalInteger(value, "limit");
+    else if (key === "pages") config.pages = readOptionalInteger(value, "pages");
+    else if (key === "max_candidates") config.maxCandidates = readOptionalInteger(value, "max-candidates");
     else if (key === "start") config.start = readInteger(value, "start", 0, 100000);
     else if (key === "concurrency") config.concurrency = readInteger(value, "concurrency", 1, 10);
     else if (key === "cc" || key === "country") config.country = value.toUpperCase();
@@ -328,6 +335,22 @@ function readInteger(value: string, label: string, min: number, max: number): nu
   }
 
   return parsed;
+}
+
+function readOptionalInteger(value: string, label: string): number | null {
+  if (isUnlimitedValue(value)) return null;
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`--${label} must be a positive integer, "all", "none", or 0.`);
+  }
+
+  return parsed;
+}
+
+function isUnlimitedValue(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === "all" || normalized === "none" || normalized === "unlimited" || normalized === "0";
 }
 
 function parseFilters(query: string): Filters {
@@ -420,7 +443,8 @@ function parseSort(value: string): SortKey {
 async function fetchSearchCandidates(filters: Filters, config: CliConfig): Promise<Candidate[]> {
   const candidates = new Map<number, Candidate>();
 
-  for (let page = 0; page < config.pages; page += 1) {
+  for (let page = 0; config.pages === null || page < config.pages; page += 1) {
+    const previousCandidateCount = candidates.size;
     const url = new URL("https://store.steampowered.com/search/results/");
     url.searchParams.set("json", "1");
     url.searchParams.set("ignore_preferences", "1");
@@ -460,6 +484,8 @@ async function fetchSearchCandidates(filters: Filters, config: CliConfig): Promi
       if (appid === null) continue;
       candidates.set(appid, { appid, name: item.name });
     }
+
+    if (items.length < SEARCH_PAGE_SIZE || candidates.size === previousCandidateCount) break;
   }
 
   return [...candidates.values()];
@@ -478,7 +504,7 @@ async function fetchAppListCandidates(config: CliConfig, warnings: string[]): Pr
   const candidates: Candidate[] = [];
   let lastAppId = config.start;
 
-  for (let page = 0; page < config.pages; page += 1) {
+  for (let page = 0; config.pages === null || page < config.pages; page += 1) {
     const input = {
       include_games: true,
       include_dlc: false,
@@ -751,6 +777,18 @@ function serializableFilters(filters: Filters) {
     includeTags: filters.includeTags,
     excludeTags: filters.excludeTags,
     term: filters.term,
+  };
+}
+
+function serializableOptions(config: CliConfig) {
+  return {
+    limit: config.limit,
+    pages: config.pages,
+    maxCandidates: config.maxCandidates,
+    start: config.start,
+    concurrency: config.concurrency,
+    country: config.country,
+    language: config.language,
   };
 }
 
