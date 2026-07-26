@@ -3,6 +3,9 @@ services:
     build: .
     ports:
       - "3000"
+    env_file:
+      - path: .env
+        required: false
     environment:
       STEAM_GAMES_DOCKER: "1"
       STEAM_GAMES_OUTPUT_FILE: /data/steam-games.json

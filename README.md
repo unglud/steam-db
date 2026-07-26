@@ -39,6 +39,8 @@ cp .env.example .env
 
 `.env` is ignored by git, and it is optional. A fresh clone runs from the defaults in `src/config.ts`.
 
+Docker Compose also reads this same `.env` file when it exists, so the usual filter and crawler settings work the same in Docker. The compose file marks `.env` as optional, so Docker still runs from the checked-in defaults when no `.env` file exists.
+
 Common knobs:
 
 - `STEAM_FILTER_MIN_DISCOUNT=25`
@@ -123,6 +125,24 @@ Result retention is enabled by default. The script keeps the newest 10 matching 
 
 ## Docker server
 
+To change Docker crawler settings, copy [.env.example](.env.example) to `.env` and edit the same variables used by the CLI:
+
+```sh
+cp .env.example .env
+```
+
+For example:
+
+```env
+STEAM_FILTER_MIN_DISCOUNT=50
+STEAM_FILTER_MIN_REVIEWS=1000
+STEAM_FILTER_OS=linux
+STEAM_FILTER_SORT=demo_positive_desc
+STEAM_GAMES_INTERVAL_HOURS=12
+```
+
+Then start the server:
+
 ```sh
 docker compose up --build
 docker compose port steam-games 3000
@@ -135,7 +155,9 @@ The container starts a small HTTP server. It runs the Steam crawl on startup onl
 
 The compose file maps container port `3000` to a random host port. Use `docker compose port steam-games 3000` to see the actual URL.
 
-Docker stores results and cache in the `steam-games-data` volume under `/data`. Local one-shot use with `pnpm run games` is unchanged.
+Docker stores results and cache in the `steam-games-data` volume under `/data`. The compose file intentionally overrides `STEAM_GAMES_OUTPUT_FILE` and `STEAM_GAMES_CACHE_DIR` to use that volume, even if `.env` has local CLI paths like `steam-games.json` or `.cache/steam`.
+
+To change container-only settings such as the exposed container port, output path, cache path, or volume mount, edit the `environment` and `volumes` sections in [docker-compose.yml](docker-compose.yml). Local one-shot use with `pnpm run games` is unchanged.
 
 ## Tests
 
