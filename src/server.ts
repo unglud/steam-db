@@ -95,6 +95,10 @@ export async function readLatestResultContent(
   };
 }
 
+export function shouldRunStartupCrawl(latestResultFile: string | null): boolean {
+  return latestResultFile === null;
+}
+
 export async function startSchedulerServer(
   serverConfig: ServerConfig = buildServerConfig(),
   runGames: (scriptConfig: ScriptConfig) => Promise<void> = runSteamGames
@@ -150,7 +154,11 @@ export async function startSchedulerServer(
   const shownPort = typeof address === "object" && address !== null ? address.port : serverConfig.port;
   log(`Server listening on ${serverConfig.host}:${shownPort}.`);
 
-  void runOnce("startup");
+  if (shouldRunStartupCrawl(state.lastOutputFile)) {
+    void runOnce("startup");
+  } else {
+    log(`Skipping startup run because existing output was found: ${state.lastOutputFile}.`);
+  }
   const interval = setInterval(() => {
     void runOnce("scheduled");
   }, serverConfig.intervalMs);

@@ -16,7 +16,7 @@ import {
   normalizeRuntimeConfig,
   serializeGame,
 } from "../src/steam-games.ts";
-import { buildServerConfig, findLatestResultFile, readLatestResultContent } from "../src/server.ts";
+import { buildServerConfig, findLatestResultFile, readLatestResultContent, shouldRunStartupCrawl } from "../src/server.ts";
 
 function makeScriptConfig() {
   const config = structuredClone(SCRIPT_CONFIG);
@@ -357,4 +357,9 @@ test("readLatestResultContent returns the latest JSON body", async () => {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("startup crawl only runs when no previous result exists", () => {
+  assert.equal(shouldRunStartupCrawl(null), true);
+  assert.equal(shouldRunStartupCrawl("/data/steam-games-2026-01-02T00-00-00-000Z.json"), false);
 });

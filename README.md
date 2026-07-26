@@ -98,7 +98,7 @@ docker compose up --build
 docker compose port steam-games 3000
 ```
 
-The container starts the server, runs the Steam crawl once on startup, then runs it again every 24 hours. The compose file maps container port `3000` to a random host port; use `docker compose port steam-games 3000` to see it.
+The container starts the server, runs the Steam crawl immediately only when no previous result file exists, then runs it every 24 hours. The compose file maps container port `3000` to a random host port; use `docker compose port steam-games 3000` to see it.
 
 - `GET /` or `GET /games`: latest result JSON
 - `GET /health`: scheduler status
