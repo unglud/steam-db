@@ -21,6 +21,7 @@ Each item in `games` keeps the basic Steam identity at the top level:
   "name": "Hades II",
   "steamUrl": "https://store.steampowered.com/app/1145350/",
   "description": "Battle beyond the Underworld using dark sorcery to take on the Titan of Time in this bewitching sequel to the award-winning rogue-like dungeon crawler.",
+  "demoAvailable": false,
   "releaseDate": "Sep 25, 2025",
   "price": {
     "discountPercent": 25,
@@ -40,7 +41,7 @@ Each item in `games` keeps the basic Steam identity at the top level:
 - `minRelease: "2000-01-01"`
 - `minReviews: 500`
 - `os: "win" | "mac" | "linux" | "applesilicon"`
-- `sort: "discount_asc" | "discount_desc" | "rating_asc" | "rating_desc" | "reviews_asc" | "reviews_desc" | "positive_asc" | "positive_desc" | "release_asc" | "release_desc" | "price_asc" | "price_desc"`
+- `sort: "discount_asc" | "discount_desc" | "rating_asc" | "rating_desc" | "reviews_asc" | "reviews_desc" | "positive_asc" | "positive_desc" | "demo_positive_desc" | "release_asc" | "release_desc" | "price_asc" | "price_desc"`
 - `includeTags: [19]`
 - `excludeTags: [1625, 1664]`
 - `ignoreNames: ["Some Game Name"]`

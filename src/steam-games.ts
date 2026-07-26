@@ -15,6 +15,7 @@ type SortKey =
   | "reviews_desc"
   | "positive_asc"
   | "positive_desc"
+  | "demo_positive_desc"
   | "release_asc"
   | "release_desc"
   | "price_asc"
@@ -143,6 +144,7 @@ type StoreDetails = {
     coming_soon?: boolean;
     date?: string;
   };
+  demos?: Array<{ appid?: number; description?: string }>;
   genres?: Array<{ id?: string; description?: string }>;
 };
 
@@ -213,6 +215,7 @@ type GameResult = {
   name: string;
   steamUrl: string;
   description: string | null;
+  demoAvailable: boolean;
   releaseDate: string | null;
   price: GamePrice;
   reviews: GameReviews;
@@ -238,6 +241,7 @@ type SerializableGameResult = {
   name: string;
   steamUrl: string;
   description: string | null;
+  demoAvailable: boolean;
   releaseDate: string | null;
   price: SerializableGamePrice;
   reviews: GameReviews;
@@ -294,10 +298,10 @@ const SCRIPT_CONFIG: ScriptConfig = {
     minRelease: "2000-01-01",
     minReviews: 500,
     os: "mac",
-    sort: "positive_desc",
+    sort: "demo_positive_desc",
     includeTags: [],
     excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
-    ignoreNames: [],
+    ignoreNames: ['Undertale', 'Hades'],
     term: "",
   },
 };
@@ -311,6 +315,7 @@ const DETAIL_FILTERS = [
   "price_overview",
   "release_date",
   "platforms",
+  "demos",
   "genres",
 ].join(",");
 
@@ -375,7 +380,7 @@ async function main(): Promise<void> {
         } else {
           logVerbose(
             config,
-            `Candidate ${candidateLabel(candidate)} enriched as ${gameLabel(game)}; price=${game.price.finalFormatted ?? game.price.final ?? "n/a"} ${game.price.currency ?? ""}; positive=${game.reviews.positive}; totalReviews=${game.reviews.total}.`
+            `Candidate ${candidateLabel(candidate)} enriched as ${gameLabel(game)}; demo=${game.demoAvailable}; price=${game.price.finalFormatted ?? game.price.final ?? "n/a"} ${game.price.currency ?? ""}; positive=${game.reviews.positive}; totalReviews=${game.reviews.total}.`
           );
         }
         if (config.outputMode === "ndjson" && game !== null) {
@@ -794,6 +799,7 @@ function parseSort(value: string): SortKey {
     "reviews_desc",
     "positive_asc",
     "positive_desc",
+    "demo_positive_desc",
     "release_asc",
     "release_desc",
     "price_asc",
@@ -927,6 +933,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
   const reviewTotal = reviews.total_reviews ?? 0;
   const positive = reviews.total_positive ?? 0;
   const negative = reviews.total_negative ?? 0;
+  const demoAvailable = (details.demos?.length ?? 0) > 0;
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
   const platforms = {
     windows: details.platforms?.windows ?? false,
@@ -935,7 +942,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
   };
   logVerbose(
     config,
-    `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}.`
+    `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", demo=${demoAvailable}, discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}.`
   );
 
   return {
@@ -943,6 +950,7 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig): Pro
     name: details.name ?? candidate.name ?? String(candidate.appid),
     steamUrl: `https://store.steampowered.com/app/${candidate.appid}/`,
     description: details.short_description ?? null,
+    demoAvailable,
     releaseDate: details.release_date?.date ?? null,
     price: {
       currency: price?.currency ?? null,
@@ -977,6 +985,7 @@ function serializeGame({
   name,
   steamUrl,
   description,
+  demoAvailable,
   releaseDate,
   price,
   reviews,
@@ -987,6 +996,7 @@ function serializeGame({
     name,
     steamUrl,
     description,
+    demoAvailable,
     releaseDate,
     price: serializePrice(price),
     reviews,
@@ -1351,6 +1361,13 @@ function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
   if (sort === "reviews_desc") return descending(a.reviews.total, b.reviews.total) || byName(a, b);
   if (sort === "positive_asc") return ascending(a.reviews.positive, b.reviews.positive) || byName(a, b);
   if (sort === "positive_desc") return descending(a.reviews.positive, b.reviews.positive) || byName(a, b);
+  if (sort === "demo_positive_desc") {
+    return (
+      descending(Number(a.demoAvailable), Number(b.demoAvailable)) ||
+      descending(a.reviews.positive, b.reviews.positive) ||
+      byName(a, b)
+    );
+  }
   if (sort === "release_asc") return ascending(a.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.internal.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
   if (sort === "release_desc") return descending(a.internal.releaseTimestamp ?? 0, b.internal.releaseTimestamp ?? 0) || byName(a, b);
   if (sort === "price_asc") return ascending(a.price.final ?? Number.MAX_SAFE_INTEGER, b.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
