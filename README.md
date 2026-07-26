@@ -13,6 +13,21 @@ Change what the script returns by editing `SCRIPT_CONFIG` near the top of `src/s
 
 The script prints progress to stderr while it works, then writes a JSON object with `filters`, `warnings`, and `games` to the configured output file.
 
+Each item in `games` keeps the basic Steam identity at the top level:
+
+```json
+{
+  "appid": 1145350,
+  "name": "Hades II",
+  "steamUrl": "https://store.steampowered.com/app/1145350/",
+  "enriched": {
+    "price": {},
+    "reviews": {},
+    "platforms": {}
+  }
+}
+```
+
 ## Config fields
 
 - `displayOnly: "Game"`

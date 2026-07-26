@@ -159,11 +159,8 @@ type Candidate = {
   name?: string;
 };
 
-type GameResult = {
-  appid: number;
-  name: string;
+type EnrichedGameData = {
   type: string;
-  steamUrl: string;
   releaseDate: string | null;
   releaseTimestamp: number | null;
   platforms: {
@@ -199,6 +196,13 @@ type GameResult = {
   recommendations: number | null;
   genres: Array<{ id: string | null; description: string | null }>;
   categories: Array<{ id: number | null; description: string | null }>;
+};
+
+type GameResult = {
+  appid: number;
+  name: string;
+  steamUrl: string;
+  enriched: EnrichedGameData;
 };
 
 // Edit this block to change what `pnpm run games` returns.
@@ -627,45 +631,47 @@ async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filt
   return {
     appid: details.steam_appid ?? candidate.appid,
     name: details.name ?? candidate.name ?? String(candidate.appid),
-    type: inferredType,
     steamUrl: `https://store.steampowered.com/app/${candidate.appid}/`,
-    releaseDate: details.release_date?.date ?? null,
-    releaseTimestamp: releaseTime,
-    platforms,
-    appleSilicon: {
-      requested: filters.os === "applesilicon",
-      publicSteamFilter: filters.os === "applesilicon" ? "mac" : null,
-      requirementHint: detectAppleSiliconHint(details),
+    enriched: {
+      type: inferredType,
+      releaseDate: details.release_date?.date ?? null,
+      releaseTimestamp: releaseTime,
+      platforms,
+      appleSilicon: {
+        requested: filters.os === "applesilicon",
+        publicSteamFilter: filters.os === "applesilicon" ? "mac" : null,
+        requirementHint: detectAppleSiliconHint(details),
+      },
+      price: {
+        currency: price?.currency ?? null,
+        initial: price?.initial ?? null,
+        final: price?.final ?? null,
+        discountPercent: price?.discount_percent ?? 0,
+        initialFormatted: price?.initial_formatted ?? null,
+        finalFormatted: price?.final_formatted ?? null,
+      },
+      reviews: {
+        score: reviews.review_score ?? null,
+        scoreDescription: reviews.review_score_desc ?? null,
+        total: reviewTotal,
+        positive,
+        negative,
+        positivePercent: reviewTotal > 0 ? roundPercent((positive / reviewTotal) * 100) : null,
+      },
+      metacritic: {
+        score: details.metacritic?.score ?? null,
+        url: details.metacritic?.url ?? null,
+      },
+      recommendations: details.recommendations?.total ?? null,
+      genres: (details.genres ?? []).map((genre) => ({
+        id: genre.id ?? null,
+        description: genre.description ?? null,
+      })),
+      categories: (details.categories ?? []).map((category) => ({
+        id: category.id ?? null,
+        description: category.description ?? null,
+      })),
     },
-    price: {
-      currency: price?.currency ?? null,
-      initial: price?.initial ?? null,
-      final: price?.final ?? null,
-      discountPercent: price?.discount_percent ?? 0,
-      initialFormatted: price?.initial_formatted ?? null,
-      finalFormatted: price?.final_formatted ?? null,
-    },
-    reviews: {
-      score: reviews.review_score ?? null,
-      scoreDescription: reviews.review_score_desc ?? null,
-      total: reviewTotal,
-      positive,
-      negative,
-      positivePercent: reviewTotal > 0 ? roundPercent((positive / reviewTotal) * 100) : null,
-    },
-    metacritic: {
-      score: details.metacritic?.score ?? null,
-      url: details.metacritic?.url ?? null,
-    },
-    recommendations: details.recommendations?.total ?? null,
-    genres: (details.genres ?? []).map((genre) => ({
-      id: genre.id ?? null,
-      description: genre.description ?? null,
-    })),
-    categories: (details.categories ?? []).map((category) => ({
-      id: category.id ?? null,
-      description: category.description ?? null,
-    })),
   };
 }
 
@@ -744,30 +750,30 @@ function errorMessage(error: unknown): string {
 }
 
 function matchesFilters(game: GameResult, filters: Filters): boolean {
-  if (filters.displayOnly.toLowerCase() === "game" && game.type !== "game") return false;
-  if (game.price.discountPercent < filters.minDiscount) return false;
-  if (game.reviews.total < filters.minReviews) return false;
-  if ((game.reviews.positivePercent ?? 0) < filters.minRating) return false;
-  if (game.releaseTimestamp !== null && game.releaseTimestamp < filters.minReleaseTime) return false;
+  if (filters.displayOnly.toLowerCase() === "game" && game.enriched.type !== "game") return false;
+  if (game.enriched.price.discountPercent < filters.minDiscount) return false;
+  if (game.enriched.reviews.total < filters.minReviews) return false;
+  if ((game.enriched.reviews.positivePercent ?? 0) < filters.minRating) return false;
+  if (game.enriched.releaseTimestamp !== null && game.enriched.releaseTimestamp < filters.minReleaseTime) return false;
 
-  if (filters.os === "win" && !game.platforms.windows) return false;
-  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.platforms.mac) return false;
-  if (filters.os === "linux" && !game.platforms.linux) return false;
+  if (filters.os === "win" && !game.enriched.platforms.windows) return false;
+  if ((filters.os === "mac" || filters.os === "applesilicon") && !game.enriched.platforms.mac) return false;
+  if (filters.os === "linux" && !game.enriched.platforms.linux) return false;
 
   return true;
 }
 
 function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {
-  if (sort === "discount_asc") return ascending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
-  if (sort === "discount_desc") return descending(a.price.discountPercent, b.price.discountPercent) || byName(a, b);
-  if (sort === "rating_asc") return ascending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
-  if (sort === "rating_desc") return descending(a.reviews.positivePercent ?? -1, b.reviews.positivePercent ?? -1) || byName(a, b);
-  if (sort === "reviews_asc") return ascending(a.reviews.total, b.reviews.total) || byName(a, b);
-  if (sort === "reviews_desc") return descending(a.reviews.total, b.reviews.total) || byName(a, b);
-  if (sort === "release_asc") return ascending(a.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
-  if (sort === "release_desc") return descending(a.releaseTimestamp ?? 0, b.releaseTimestamp ?? 0) || byName(a, b);
-  if (sort === "price_asc") return ascending(a.price.final ?? Number.MAX_SAFE_INTEGER, b.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
-  if (sort === "price_desc") return descending(a.price.final ?? -1, b.price.final ?? -1) || byName(a, b);
+  if (sort === "discount_asc") return ascending(a.enriched.price.discountPercent, b.enriched.price.discountPercent) || byName(a, b);
+  if (sort === "discount_desc") return descending(a.enriched.price.discountPercent, b.enriched.price.discountPercent) || byName(a, b);
+  if (sort === "rating_asc") return ascending(a.enriched.reviews.positivePercent ?? -1, b.enriched.reviews.positivePercent ?? -1) || byName(a, b);
+  if (sort === "rating_desc") return descending(a.enriched.reviews.positivePercent ?? -1, b.enriched.reviews.positivePercent ?? -1) || byName(a, b);
+  if (sort === "reviews_asc") return ascending(a.enriched.reviews.total, b.enriched.reviews.total) || byName(a, b);
+  if (sort === "reviews_desc") return descending(a.enriched.reviews.total, b.enriched.reviews.total) || byName(a, b);
+  if (sort === "release_asc") return ascending(a.enriched.releaseTimestamp ?? Number.MAX_SAFE_INTEGER, b.enriched.releaseTimestamp ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
+  if (sort === "release_desc") return descending(a.enriched.releaseTimestamp ?? 0, b.enriched.releaseTimestamp ?? 0) || byName(a, b);
+  if (sort === "price_asc") return ascending(a.enriched.price.final ?? Number.MAX_SAFE_INTEGER, b.enriched.price.final ?? Number.MAX_SAFE_INTEGER) || byName(a, b);
+  if (sort === "price_desc") return descending(a.enriched.price.final ?? -1, b.enriched.price.final ?? -1) || byName(a, b);
 
   return byName(a, b);
 }
