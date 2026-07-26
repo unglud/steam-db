@@ -4,6 +4,8 @@
 /.env.*
 !/.env.example
 /node_modules
+/.cache
+/steam-games*.json
 coverage
 dist
 *.tsbuildinfo

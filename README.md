@@ -1,6 +1,8 @@
-# Steam games filter
+# Steam games deals
 
-Fetch filtered Steam sale games as JSON. The script uses public Steam Store endpoints, enriches each search result with price, reviews, description, demo availability, and genres, then writes a timestamped JSON result file.
+An easy way to get a curated JSON list of discounted Steam games. Tune the filters you care about, such as minimum discount, review count, platform, release date, tags, ignored titles, and demo availability, then run one command to generate a clean result file.
+
+The script uses public Steam Store endpoints, enriches each search result with price, reviews, description, demo availability, and genres, then writes a timestamped JSON result file. It is useful for building your own sale browser, personal watchlist, recommendation pipeline, dashboard, or static dataset.
 
 No Steam API key is required.
 
@@ -60,6 +62,8 @@ Supported sort values:
 - `release_desc`
 - `price_asc`
 - `price_desc`
+
+`demo_positive_desc` is the default sort. It puts games with a verified playable demo first, then sorts within each demo group by the raw number of positive Steam reviews from highest to lowest. In practice, this makes the result start with discounted games you can try immediately, with broadly liked games near the top.
 
 ## Output
 
