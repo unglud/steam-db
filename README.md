@@ -70,6 +70,7 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
 - `outputFile`: result file path, or `null` for stdout
 - `cache`: disk cache settings
+- `cache.cleanupExpired`: delete expired cache JSON files at startup
 
 The script only uses Steam Store search for discovery because it supports OS, specials, and tag filters.
 
@@ -80,6 +81,8 @@ Cache defaults:
 - Review summaries: 3 days
 
 Cache files are written under `.cache/steam`.
+
+Expired cache files are deleted at startup when `cache.cleanupExpired` is `true`.
 
 Existing output files are never overwritten. If `steam-games.json` exists, the script writes `steam-games-1.json`, then `steam-games-2.json`, and so on.
 

@@ -75,6 +75,7 @@ type RetryConfig = {
 type CacheConfig = {
   enabled: boolean;
   directory: string;
+  cleanupExpired: boolean;
   searchTtlHours: number;
   appDetailsTtlHours: number;
   reviewSummaryTtlHours: number;
@@ -250,6 +251,7 @@ const SCRIPT_CONFIG: ScriptConfig = {
   cache: {
     enabled: true,
     directory: ".cache/steam",
+    cleanupExpired: true,
     searchTtlHours: 24,
     appDetailsTtlHours: 24,
     reviewSummaryTtlHours: 72,
@@ -296,6 +298,12 @@ async function main(): Promise<void> {
     }
     if (config.pages === null && config.maxCandidates === null && config.limit === null) {
       logProgress(config, "Full crawl enabled: this can take several minutes and may hit Steam rate limits.");
+    }
+    if (config.cache.enabled && config.cache.cleanupExpired) {
+      const removedCacheFiles = await cleanupExpiredCache(config);
+      if (removedCacheFiles > 0) {
+        logProgress(config, `Removed ${removedCacheFiles} expired cache file(s).`);
+      }
     }
 
     if (filters.os === "applesilicon") {
@@ -463,6 +471,9 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   }
   if (config.cache.directory.trim() === "") {
     throw new Error("SCRIPT_CONFIG.cache.directory must be a non-empty path.");
+  }
+  if (typeof config.cache.cleanupExpired !== "boolean") {
+    throw new Error("SCRIPT_CONFIG.cache.cleanupExpired must be true or false.");
   }
   if (!isPositiveNumber(config.cache.searchTtlHours)) {
     throw new Error("SCRIPT_CONFIG.cache.searchTtlHours must be a positive number.");
@@ -848,6 +859,58 @@ async function writeCache<T>(filePath: string, entry: CacheEntry<T>): Promise<vo
   const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   await writeFile(tempPath, JSON.stringify(entry));
   await rename(tempPath, filePath);
+}
+
+async function cleanupExpiredCache(config: RuntimeConfig): Promise<number> {
+  const { readdir, readFile, unlink } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const now = Date.now();
+
+  async function walk(directory: string): Promise<number> {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return 0;
+      throw error;
+    }
+
+    let removed = 0;
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        removed += await walk(path);
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      if (!(await isExpiredCacheFile(path, now, readFile))) continue;
+
+      try {
+        await unlink(path);
+        removed += 1;
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) throw error;
+      }
+    }
+
+    return removed;
+  }
+
+  return walk(config.cache.directory);
+}
+
+async function isExpiredCacheFile(
+  filePath: string,
+  now: number,
+  readFile: (path: string, encoding: "utf8") => Promise<string>
+): Promise<boolean> {
+  try {
+    const entry = JSON.parse(await readFile(filePath, "utf8")) as Partial<CacheEntry<unknown>>;
+    return typeof entry.expiresAt === "number" && entry.expiresAt <= now;
+  } catch {
+    return false;
+  }
 }
 
 function hoursToMs(hours: number): number {
