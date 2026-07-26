@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "games": "node --env-file=.env src/steam-games.ts",
+    "serve": "node --env-file=.env src/server.ts",
     "test": "node --test test/*.test.ts"
   },
   "devEngines": {

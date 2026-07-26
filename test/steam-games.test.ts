@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,7 @@ import {
   normalizeRuntimeConfig,
   serializeGame,
 } from "../src/steam-games.ts";
+import { buildServerConfig, findLatestResultFile, readLatestResultContent } from "../src/server.ts";
 
 function makeScriptConfig() {
   const config = structuredClone(SCRIPT_CONFIG);
@@ -308,6 +309,51 @@ test("demo page availability uses the one-week demo page cache TTL", async () =>
     const cacheEntry = JSON.parse(await readFile(join(tempDir, "demopage", cacheFiles[0]), "utf8"));
     assert.equal(cacheEntry.expiresAt - cacheEntry.createdAt, 168 * 60 * 60 * 1000);
     assert.equal(cacheEntry.data, true);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("buildServerConfig applies Docker data defaults and environment overrides", () => {
+  const config = buildServerConfig({
+    STEAM_GAMES_DOCKER: "1",
+    STEAM_GAMES_INTERVAL_HOURS: "12",
+    PORT: "4567",
+    HOST: "127.0.0.1",
+  });
+
+  assert.equal(config.host, "127.0.0.1");
+  assert.equal(config.port, 4567);
+  assert.equal(config.intervalMs, 12 * 60 * 60 * 1000);
+  assert.equal(config.scriptConfig.outputFile, "/data/steam-games.json");
+  assert.equal(config.scriptConfig.cache.directory, "/data/.cache/steam");
+});
+
+test("findLatestResultFile returns newest timestamped output", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "steam-games-result-test-"));
+  try {
+    const older = join(tempDir, "steam-games-2026-01-01T00-00-00-000Z.json");
+    const newer = join(tempDir, "steam-games-2026-01-02T00-00-00-000Z.json");
+    await writeFile(older, "{}\n");
+    await writeFile(newer, "{}\n");
+    await writeFile(join(tempDir, "other.json"), "{}\n");
+
+    assert.equal(await findLatestResultFile(join(tempDir, "steam-games.json")), newer);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("readLatestResultContent returns the latest JSON body", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "steam-games-server-test-"));
+  try {
+    const resultFile = join(tempDir, "steam-games-2026-01-02T00-00-00-000Z.json");
+    await writeFile(resultFile, JSON.stringify({ games: [{ appid: 1 }] }));
+
+    const result = await readLatestResultContent(join(tempDir, "steam-games.json"));
+
+    assert.equal(result?.path, resultFile);
+    assert.deepEqual(JSON.parse(result?.body ?? ""), { games: [{ appid: 1 }] });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

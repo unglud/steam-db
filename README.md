@@ -5,6 +5,7 @@ Fetch Steam games as JSON using public Steam endpoints and filters shaped like t
 ```sh
 pnpm install
 pnpm run games
+pnpm run serve
 pnpm test
 ```
 
@@ -89,3 +90,17 @@ Expired cache files are deleted at startup when `cache.cleanupExpired` is `true`
 Existing output files are never overwritten. For `outputFile: "steam-games.json"`, each run writes a timestamped file like `steam-games-2026-07-26T14-32-02-725Z.json`. When `outputRetention.enabled` is `true`, the script keeps the newest `outputRetention.keepLast` matching result files and deletes older ones after a successful run.
 
 Steam may throttle app detail requests when scanning many pages. The script spaces fresh requests, retries 429 responses with backoff, and reports any candidates that still fail in `warnings`. If that happens, wait a bit and run `pnpm run games` again; cached successful requests are reused, so reruns mostly fill the missing app details.
+
+## Docker
+
+```sh
+docker compose up --build
+docker compose port steam-games 3000
+```
+
+The container starts the server, runs the Steam crawl once on startup, then runs it again every 24 hours. The compose file maps container port `3000` to a random host port; use `docker compose port steam-games 3000` to see it.
+
+- `GET /` or `GET /games`: latest result JSON
+- `GET /health`: scheduler status
+
+Docker stores results and cache in the `steam-games-data` volume under `/data`. Local one-shot use with `pnpm run games` is unchanged.

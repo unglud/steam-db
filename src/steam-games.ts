@@ -314,7 +314,7 @@ export const SCRIPT_CONFIG: ScriptConfig = {
     sort: "demo_positive_desc",
     includeTags: [],
     excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
-    ignoreNames: ['Undertale', 'Hades'],
+    ignoreNames: ['Undertale', 'Hades', 'Soulstone Survivors','Nova Drift'],
     term: "",
   },
 };
