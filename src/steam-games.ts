@@ -1,5 +1,4 @@
 declare const process: {
-  argv: string[];
   env: Record<string, string | undefined>;
   exitCode?: number;
   stderr: { write(chunk: string): void };
@@ -20,8 +19,7 @@ type SortKey =
 
 type PlatformName = "win" | "mac" | "linux" | "applesilicon" | "";
 
-type CliConfig = {
-  query: string;
+type RuntimeConfig = {
   limit: number | null;
   pages: number | null;
   maxCandidates: number | null;
@@ -30,6 +28,23 @@ type CliConfig = {
   country: string;
   language: string;
   source: Source;
+};
+
+type EditableFilters = {
+  displayOnly: string;
+  minDiscount: number;
+  minRating: number;
+  minRelease: string;
+  minReviews: number;
+  os: PlatformName;
+  sort: SortKey;
+  includeTags: number[];
+  excludeTags: number[];
+  term: string;
+};
+
+type ScriptConfig = RuntimeConfig & {
+  filters: EditableFilters;
 };
 
 type Filters = {
@@ -175,8 +190,30 @@ type GameResult = {
   categories: Array<{ id: number | null; description: string | null }>;
 };
 
-const DEFAULT_QUERY =
-  "displayOnly=Game&min_discount=25&min_rating=0&min_release=2000-01-01&min_reviews=500&os=applesilicon&sort=discount_asc&tagid=-1625%2C-1664%2C-3799%2C-3843%2C-3859%2C-5537%2C-7178";
+// Edit this block to change what `pnpm run games` returns.
+const SCRIPT_CONFIG: ScriptConfig = {
+  source: "search",
+  country: process.env.STEAM_CC ?? "US",
+  language: process.env.STEAM_LANG ?? "english",
+  start: 0,
+  pages: null,
+  limit: null,
+  maxCandidates: null,
+  concurrency: 2,
+  filters: {
+    displayOnly: "Game",
+    minDiscount: 25,
+    minRating: 0,
+    minRelease: "2000-01-01",
+    minReviews: 500,
+    os: "applesilicon",
+    sort: "discount_asc",
+    includeTags: [],
+    excludeTags: [1625, 1664, 3799, 3843, 3859, 5537, 7178],
+    term: "",
+  },
+};
+
 const USER_AGENT = "steam-db-ts-script/0.1 (+https://store.steampowered.com)";
 const SEARCH_PAGE_SIZE = 50;
 const DETAIL_FILTERS = [
@@ -195,8 +232,8 @@ const DETAIL_FILTERS = [
 ].join(",");
 
 async function main(): Promise<void> {
-  const config = parseCli(process.argv.slice(2));
-  const filters = parseFilters(config.query);
+  const config = normalizeRuntimeConfig(SCRIPT_CONFIG);
+  const filters = normalizeFilters(SCRIPT_CONFIG.filters);
   const warnings: string[] = [];
 
   if (filters.os === "applesilicon") {
@@ -251,112 +288,40 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(output, null, 2));
 }
 
-function parseCli(args: string[]): CliConfig {
-  let query = DEFAULT_QUERY;
-  const overrides = new URLSearchParams();
-  const config: CliConfig = {
-    query,
-    limit: null,
-    pages: null,
-    maxCandidates: null,
-    start: 0,
-    concurrency: 2,
-    country: process.env.STEAM_CC ?? "US",
-    language: process.env.STEAM_LANG ?? "english",
-    source: "search",
+function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
+  if (config.limit !== null && (!Number.isFinite(config.limit) || config.limit < 1)) {
+    throw new Error("SCRIPT_CONFIG.limit must be a positive number or null.");
+  }
+  if (config.pages !== null && (!Number.isFinite(config.pages) || config.pages < 1)) {
+    throw new Error("SCRIPT_CONFIG.pages must be a positive number or null.");
+  }
+  if (config.maxCandidates !== null && (!Number.isFinite(config.maxCandidates) || config.maxCandidates < 1)) {
+    throw new Error("SCRIPT_CONFIG.maxCandidates must be a positive number or null.");
+  }
+  if (!Number.isFinite(config.start) || config.start < 0) {
+    throw new Error("SCRIPT_CONFIG.start must be zero or a positive number.");
+  }
+  if (!Number.isFinite(config.concurrency) || config.concurrency < 1 || config.concurrency > 10) {
+    throw new Error("SCRIPT_CONFIG.concurrency must be between 1 and 10.");
+  }
+  if (config.source !== "search" && config.source !== "applist") {
+    throw new Error('SCRIPT_CONFIG.source must be "search" or "applist".');
+  }
+
+  return {
+    limit: config.limit,
+    pages: config.pages,
+    maxCandidates: config.maxCandidates,
+    start: config.start,
+    concurrency: config.concurrency,
+    country: config.country.toUpperCase(),
+    language: config.language,
+    source: config.source,
   };
-
-  for (const arg of args) {
-    if (arg === "--") continue;
-    if (arg === "--all") {
-      config.limit = null;
-      config.pages = null;
-      config.maxCandidates = null;
-      continue;
-    }
-
-    if (!arg.startsWith("--")) {
-      query = arg;
-      continue;
-    }
-
-    const [rawKey, rawValue = "true"] = arg.slice(2).split("=", 2);
-    const key = normalizeCliKey(rawKey);
-    const value = rawValue.trim();
-
-    if (key === "limit") config.limit = readOptionalInteger(value, "limit");
-    else if (key === "pages") config.pages = readOptionalInteger(value, "pages");
-    else if (key === "max_candidates") config.maxCandidates = readOptionalInteger(value, "max-candidates");
-    else if (key === "start") config.start = readInteger(value, "start", 0, 100000);
-    else if (key === "concurrency") config.concurrency = readInteger(value, "concurrency", 1, 10);
-    else if (key === "cc" || key === "country") config.country = value.toUpperCase();
-    else if (key === "lang" || key === "language") config.language = value;
-    else if (key === "source") config.source = parseSource(value);
-    else overrides.set(cliKeyToQueryParam(key), value);
-  }
-
-  const params = new URLSearchParams(queryToSearchParams(query));
-  for (const [key, value] of overrides) params.set(key, value);
-
-  config.query = params.toString();
-  return config;
 }
 
-function normalizeCliKey(key: string): string {
-  return key.trim().replaceAll("-", "_");
-}
-
-function cliKeyToQueryParam(key: string): string {
-  const map: Record<string, string> = {
-    display_only: "displayOnly",
-    min_discount: "min_discount",
-    min_rating: "min_rating",
-    min_release: "min_release",
-    min_reviews: "min_reviews",
-    tagid: "tagid",
-    tags: "tagid",
-    os: "os",
-    sort: "sort",
-    term: "term",
-  };
-
-  return map[key] ?? key;
-}
-
-function parseSource(value: string): Source {
-  if (value === "search" || value === "applist") return value;
-  throw new Error(`Unsupported source "${value}". Use search or applist.`);
-}
-
-function readInteger(value: string, label: string, min: number, max: number): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
-    throw new Error(`--${label} must be an integer between ${min} and ${max}.`);
-  }
-
-  return parsed;
-}
-
-function readOptionalInteger(value: string, label: string): number | null {
-  if (isUnlimitedValue(value)) return null;
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new Error(`--${label} must be a positive integer, "all", "none", or 0.`);
-  }
-
-  return parsed;
-}
-
-function isUnlimitedValue(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return normalized === "all" || normalized === "none" || normalized === "unlimited" || normalized === "0";
-}
-
-function parseFilters(query: string): Filters {
-  const params = queryToSearchParams(query);
-  const tagIds = parseTagIds(params.get("tagid") ?? params.get("tags") ?? "");
-  const minRelease = params.get("min_release") ?? "1970-01-01";
+function normalizeFilters(config: EditableFilters): Filters {
+  const minRelease = config.minRelease || "1970-01-01";
   const minReleaseTime = Date.parse(`${minRelease}T00:00:00Z`);
 
   if (!Number.isFinite(minReleaseTime)) {
@@ -364,49 +329,18 @@ function parseFilters(query: string): Filters {
   }
 
   return {
-    displayOnly: params.get("displayOnly") ?? "Game",
-    minDiscount: numberParam(params, "min_discount", 0),
-    minRating: numberParam(params, "min_rating", 0),
+    displayOnly: config.displayOnly,
+    minDiscount: config.minDiscount,
+    minRating: config.minRating,
     minRelease,
     minReleaseTime,
-    minReviews: numberParam(params, "min_reviews", 0),
-    os: parsePlatform(params.get("os") ?? ""),
-    sort: parseSort(params.get("sort") ?? "discount_asc"),
-    includeTags: tagIds.filter((tag) => tag > 0),
-    excludeTags: tagIds.filter((tag) => tag < 0).map((tag) => Math.abs(tag)),
-    term: params.get("term") ?? "",
+    minReviews: config.minReviews,
+    os: parsePlatform(config.os),
+    sort: parseSort(config.sort),
+    includeTags: config.includeTags,
+    excludeTags: config.excludeTags.map((tag) => Math.abs(tag)),
+    term: config.term,
   };
-}
-
-function queryToSearchParams(value: string): URLSearchParams {
-  const trimmed = value.trim();
-  if (!trimmed) return new URLSearchParams();
-
-  try {
-    const url = new URL(trimmed);
-    return url.searchParams;
-  } catch {
-    return new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed);
-  }
-}
-
-function numberParam(params: URLSearchParams, key: string, fallback: number): number {
-  const value = params.get(key);
-  if (value === null || value === "") return fallback;
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${key} must be a number. Got "${value}".`);
-  }
-
-  return parsed;
-}
-
-function parseTagIds(value: string): number[] {
-  return value
-    .split(",")
-    .map((tag) => Number.parseInt(tag.trim(), 10))
-    .filter((tag) => Number.isFinite(tag));
 }
 
 function parsePlatform(value: string): PlatformName {
@@ -440,7 +374,7 @@ function parseSort(value: string): SortKey {
   throw new Error(`Unsupported sort "${value}". Supported sorts: ${supported.join(", ")}.`);
 }
 
-async function fetchSearchCandidates(filters: Filters, config: CliConfig): Promise<Candidate[]> {
+async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): Promise<Candidate[]> {
   const candidates = new Map<number, Candidate>();
 
   for (let page = 0; config.pages === null || page < config.pages; page += 1) {
@@ -491,7 +425,7 @@ async function fetchSearchCandidates(filters: Filters, config: CliConfig): Promi
   return [...candidates.values()];
 }
 
-async function fetchAppListCandidates(config: CliConfig, warnings: string[]): Promise<Candidate[]> {
+async function fetchAppListCandidates(config: RuntimeConfig, warnings: string[]): Promise<Candidate[]> {
   const key = process.env.STEAM_WEB_API_KEY;
   if (!key) {
     throw new Error("source=applist requires STEAM_WEB_API_KEY in the environment.");
@@ -547,7 +481,7 @@ function extractAppId(logo: string): number | null {
   return Number.isFinite(appid) ? appid : null;
 }
 
-async function enrichCandidate(candidate: Candidate, config: CliConfig, filters: Filters): Promise<GameResult | null> {
+async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filters: Filters): Promise<GameResult | null> {
   const [details, reviews] = await Promise.all([
     fetchAppDetails(candidate.appid, config),
     fetchReviewSummary(candidate.appid),
@@ -612,7 +546,7 @@ async function enrichCandidate(candidate: Candidate, config: CliConfig, filters:
   };
 }
 
-async function fetchAppDetails(appid: number, config: CliConfig): Promise<StoreDetails | null> {
+async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<StoreDetails | null> {
   const url = new URL("https://store.steampowered.com/api/appdetails");
   url.searchParams.set("appids", String(appid));
   url.searchParams.set("filters", DETAIL_FILTERS);
@@ -780,7 +714,7 @@ function serializableFilters(filters: Filters) {
   };
 }
 
-function serializableOptions(config: CliConfig) {
+function serializableOptions(config: RuntimeConfig) {
   return {
     limit: config.limit,
     pages: config.pages,
