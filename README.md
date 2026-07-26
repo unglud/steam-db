@@ -3,8 +3,11 @@
 Fetch Steam games as JSON using public Steam endpoints and filters shaped like the SteamDB sale URL parameters.
 
 ```sh
+pnpm install
 pnpm run games:sample
 ```
+
+This project pins Node through pnpm, so `pnpm install` downloads the project runtime if your shell does not have `node`.
 
 Or pass a full URL/query string and overrides:
 
