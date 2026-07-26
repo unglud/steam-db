@@ -51,12 +51,20 @@ Useful runtime fields in `SCRIPT_CONFIG`:
 - `concurrency`: concurrent detail/review lookups
 - `country`: country code for price data
 - `language`: language for store details
-- `source`: `search` or `applist`
 - `progress`: print progress messages to stderr
 - `outputMode`: `json` for one final object, or `ndjson` to stream matching games line-by-line
 - `outputFile`: result file path, or `null` for stdout
+- `cache`: disk cache settings
 
-`source=search` is the default because Steam search supports OS, specials, and tag filters. `source=applist` uses `IStoreService/GetAppList` and requires `STEAM_WEB_API_KEY`, but it cannot prefilter by tags or discounts.
+The script only uses Steam Store search for discovery because it supports OS, specials, and tag filters.
+
+Cache defaults:
+
+- Steam search pages: 24 hours
+- App details, including price/discount: 24 hours
+- Review summaries: 3 days
+
+Cache files are written under `.cache/steam`.
 
 Existing output files are never overwritten. If `steam-games.json` exists, the script writes `steam-games-1.json`, then `steam-games-2.json`, and so on.
 

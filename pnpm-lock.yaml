@@ -8,11 +8,17 @@ importers:
 
   .:
     devDependencies:
+      '@types/node':
+        specifier: ^26.1.1
+        version: 26.1.1
       node:
         specifier: runtime:24.14.0
         version: runtime:24.14.0
 
 packages:
+
+  '@types/node@26.1.1':
+    resolution: {integrity: sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw==}
 
   node@runtime:24.14.0:
     resolution:
@@ -135,6 +141,15 @@ packages:
     version: 24.14.0
     hasBin: true
 
+  undici-types@8.3.0:
+    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+
 snapshots:
 
+  '@types/node@26.1.1':
+    dependencies:
+      undici-types: 8.3.0
+
   node@runtime:24.14.0: {}
+
+  undici-types@8.3.0: {}

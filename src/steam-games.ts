@@ -5,7 +5,6 @@ declare const process: {
   stderr: { write(chunk: string): void };
 };
 
-type Source = "search" | "applist";
 type OutputMode = "json" | "ndjson";
 type SortKey =
   | "discount_asc"
@@ -29,10 +28,10 @@ type RuntimeConfig = {
   concurrency: number;
   country: string;
   language: string;
-  source: Source;
   outputMode: OutputMode;
   outputFile: string | null;
   progress: boolean;
+  cache: CacheConfig;
 };
 
 type EditableFilters = {
@@ -50,6 +49,14 @@ type EditableFilters = {
 
 type ScriptConfig = RuntimeConfig & {
   filters: EditableFilters;
+};
+
+type CacheConfig = {
+  enabled: boolean;
+  directory: string;
+  searchTtlHours: number;
+  appDetailsTtlHours: number;
+  reviewSummaryTtlHours: number;
 };
 
 type OutputWriter = {
@@ -79,19 +86,6 @@ type SearchItem = {
 
 type SearchResponse = {
   items?: SearchItem[];
-};
-
-type AppListResponse = {
-  response?: {
-    apps?: Array<{
-      appid: number;
-      name?: string;
-      last_modified?: number;
-      price_change_number?: number;
-    }>;
-    have_more_results?: boolean;
-    last_appid?: number;
-  };
 };
 
 type PriceOverview = {
@@ -207,7 +201,6 @@ type GameResult = {
 
 // Edit this block to change what `pnpm run games` returns.
 const SCRIPT_CONFIG: ScriptConfig = {
-  source: "search",
   country: process.env.STEAM_CC ?? "US",
   language: process.env.STEAM_LANG ?? "english",
   start: 0,
@@ -218,6 +211,13 @@ const SCRIPT_CONFIG: ScriptConfig = {
   outputMode: "json",
   outputFile: "steam-games.json",
   progress: true,
+  cache: {
+    enabled: true,
+    directory: ".cache/steam",
+    searchTtlHours: 24,
+    appDetailsTtlHours: 24,
+    reviewSummaryTtlHours: 72,
+  },
   filters: {
     displayOnly: "Game",
     minDiscount: 25,
@@ -270,10 +270,7 @@ async function main(): Promise<void> {
       );
     }
 
-    const discoveredCandidates =
-      config.source === "applist"
-        ? await fetchAppListCandidates(config, warnings)
-        : await fetchSearchCandidates(filters, config);
+    const discoveredCandidates = await fetchSearchCandidates(filters, config);
     const candidates =
       config.maxCandidates === null ? discoveredCandidates : discoveredCandidates.slice(0, config.maxCandidates);
     logProgress(config, `Discovered ${discoveredCandidates.length} candidate(s); enriching ${candidates.length}.`);
@@ -314,7 +311,7 @@ async function main(): Promise<void> {
 
     const output = {
       generatedAt: new Date().toISOString(),
-      source: config.source,
+      source: "search",
       discoveredCandidates: discoveredCandidates.length,
       scannedCandidates: candidates.length,
       returned: returnedGames.length,
@@ -420,14 +417,23 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
   if (!Number.isFinite(config.concurrency) || config.concurrency < 1 || config.concurrency > 10) {
     throw new Error("SCRIPT_CONFIG.concurrency must be between 1 and 10.");
   }
-  if (config.source !== "search" && config.source !== "applist") {
-    throw new Error('SCRIPT_CONFIG.source must be "search" or "applist".');
-  }
   if (config.outputMode !== "json" && config.outputMode !== "ndjson") {
     throw new Error('SCRIPT_CONFIG.outputMode must be "json" or "ndjson".');
   }
   if (config.outputFile !== null && config.outputFile.trim() === "") {
     throw new Error("SCRIPT_CONFIG.outputFile must be a file path string or null.");
+  }
+  if (config.cache.directory.trim() === "") {
+    throw new Error("SCRIPT_CONFIG.cache.directory must be a non-empty path.");
+  }
+  if (!isPositiveNumber(config.cache.searchTtlHours)) {
+    throw new Error("SCRIPT_CONFIG.cache.searchTtlHours must be a positive number.");
+  }
+  if (!isPositiveNumber(config.cache.appDetailsTtlHours)) {
+    throw new Error("SCRIPT_CONFIG.cache.appDetailsTtlHours must be a positive number.");
+  }
+  if (!isPositiveNumber(config.cache.reviewSummaryTtlHours)) {
+    throw new Error("SCRIPT_CONFIG.cache.reviewSummaryTtlHours must be a positive number.");
   }
 
   return {
@@ -438,11 +444,15 @@ function normalizeRuntimeConfig(config: ScriptConfig): RuntimeConfig {
     concurrency: config.concurrency,
     country: config.country.toUpperCase(),
     language: config.language,
-    source: config.source,
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
+    cache: config.cache,
   };
+}
+
+function isPositiveNumber(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
 }
 
 function normalizeFilters(config: EditableFilters): Filters {
@@ -534,7 +544,13 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
       url.searchParams.set("term", filters.term);
     }
 
-    const response = await fetchJson<SearchResponse>(url);
+    const response = await fetchCachedJson<SearchResponse>(
+      config,
+      "search",
+      url.toString(),
+      hoursToMs(config.cache.searchTtlHours),
+      () => fetchJson<SearchResponse>(url)
+    );
     const items = response.items ?? [];
     if (items.length === 0) break;
 
@@ -549,49 +565,6 @@ async function fetchSearchCandidates(filters: Filters, config: RuntimeConfig): P
   }
 
   return [...candidates.values()];
-}
-
-async function fetchAppListCandidates(config: RuntimeConfig, warnings: string[]): Promise<Candidate[]> {
-  const key = process.env.STEAM_WEB_API_KEY;
-  if (!key) {
-    throw new Error("source=applist requires STEAM_WEB_API_KEY in the environment.");
-  }
-
-  warnings.push(
-    "source=applist scans Valve's app catalog but cannot prefilter by search-only fields such as tags, OS, or active discounts."
-  );
-
-  const candidates: Candidate[] = [];
-  let lastAppId = config.start;
-
-  for (let page = 0; config.pages === null || page < config.pages; page += 1) {
-    const input = {
-      include_games: true,
-      include_dlc: false,
-      include_software: false,
-      include_videos: false,
-      include_hardware: false,
-      max_results: SEARCH_PAGE_SIZE,
-      last_appid: lastAppId,
-    };
-    const url = new URL("https://api.steampowered.com/IStoreService/GetAppList/v1/");
-    url.searchParams.set("key", key);
-    url.searchParams.set("input_json", JSON.stringify(input));
-
-    const response = await fetchJson<AppListResponse>(url);
-    const apps = response.response?.apps ?? [];
-    if (apps.length === 0) break;
-
-    for (const app of apps) {
-      candidates.push({ appid: app.appid, name: app.name });
-    }
-    logProgress(config, `Fetched app-list page ${page + 1}; found ${candidates.length} candidate(s).`);
-
-    lastAppId = response.response?.last_appid ?? apps[apps.length - 1]?.appid ?? lastAppId;
-    if (!response.response?.have_more_results) break;
-  }
-
-  return candidates;
 }
 
 function toSteamSearchOs(os: PlatformName): "win" | "mac" | "linux" | null {
@@ -611,7 +584,7 @@ function extractAppId(logo: string): number | null {
 async function enrichCandidate(candidate: Candidate, config: RuntimeConfig, filters: Filters): Promise<GameResult | null> {
   const [details, reviews] = await Promise.all([
     fetchAppDetails(candidate.appid, config),
-    fetchReviewSummary(candidate.appid),
+    fetchReviewSummary(candidate.appid, config),
   ]);
 
   if (!details) return null;
@@ -682,22 +655,98 @@ async function fetchAppDetails(appid: number, config: RuntimeConfig): Promise<St
   url.searchParams.set("cc", config.country);
   url.searchParams.set("l", config.language);
 
-  const response = await fetchJson<AppDetailsResponse>(url);
+  const response = await fetchCachedJson<AppDetailsResponse>(
+    config,
+    "appdetails",
+    url.toString(),
+    hoursToMs(config.cache.appDetailsTtlHours),
+    () => fetchJson<AppDetailsResponse>(url)
+  );
   const app = response[String(appid)];
   if (!app?.success || !app.data) return null;
 
   return app.data;
 }
 
-async function fetchReviewSummary(appid: number): Promise<ReviewSummary> {
+async function fetchReviewSummary(appid: number, config: RuntimeConfig): Promise<ReviewSummary> {
   const url = new URL(`https://store.steampowered.com/appreviews/${appid}`);
   url.searchParams.set("json", "1");
   url.searchParams.set("language", "all");
   url.searchParams.set("purchase_type", "all");
   url.searchParams.set("num_per_page", "0");
 
-  const response = await fetchJson<ReviewResponse>(url);
+  const response = await fetchCachedJson<ReviewResponse>(
+    config,
+    "reviews",
+    url.toString(),
+    hoursToMs(config.cache.reviewSummaryTtlHours),
+    () => fetchJson<ReviewResponse>(url)
+  );
   return response.query_summary ?? {};
+}
+
+async function fetchCachedJson<T>(
+  config: RuntimeConfig,
+  namespace: "search" | "appdetails" | "reviews",
+  key: string,
+  ttlMs: number,
+  loadFresh: () => Promise<T>
+): Promise<T> {
+  if (!config.cache.enabled) return loadFresh();
+
+  const filePath = await cacheFilePath(config, namespace, key);
+  const cached = await readCache<T>(filePath);
+  const now = Date.now();
+  if (cached !== null && cached.expiresAt > now) {
+    return cached.data;
+  }
+
+  const data = await loadFresh();
+  await writeCache(filePath, {
+    createdAt: now,
+    expiresAt: now + ttlMs,
+    key,
+    data,
+  });
+  return data;
+}
+
+type CacheEntry<T> = {
+  createdAt: number;
+  expiresAt: number;
+  key: string;
+  data: T;
+};
+
+async function cacheFilePath(config: RuntimeConfig, namespace: string, key: string): Promise<string> {
+  const { createHash } = await import("node:crypto");
+  const { join } = await import("node:path");
+  const digest = createHash("sha256").update(key).digest("hex");
+  return join(config.cache.directory, namespace, `${digest}.json`);
+}
+
+async function readCache<T>(filePath: string): Promise<CacheEntry<T> | null> {
+  const { readFile } = await import("node:fs/promises");
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as CacheEntry<T>;
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    return null;
+  }
+}
+
+async function writeCache<T>(filePath: string, entry: CacheEntry<T>): Promise<void> {
+  const { mkdir, rename, writeFile } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  await writeFile(tempPath, JSON.stringify(entry));
+  await rename(tempPath, filePath);
+}
+
+function hoursToMs(hours: number): number {
+  return hours * 60 * 60 * 1000;
 }
 
 async function fetchJson<T>(url: URL, attempt = 0): Promise<T> {
@@ -855,6 +904,7 @@ function serializableOptions(config: RuntimeConfig) {
     outputMode: config.outputMode,
     outputFile: config.outputFile,
     progress: config.progress,
+    cache: config.cache,
   };
 }
 
