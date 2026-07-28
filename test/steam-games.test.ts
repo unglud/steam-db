@@ -10,6 +10,7 @@ import {
   compareGames,
   enrichCandidate,
   filterGame,
+  fetchReviewSummary,
   getScriptConfig,
   hasInstallLink,
   isDemoPageInstallable,
@@ -334,6 +335,62 @@ test("enrichCandidate verifies demo availability through the demo page", async (
 
   assert.equal(game?.demoAvailable, false);
   assert.equal(fetches.some((url) => url.includes("/app/666970/")), true);
+});
+
+test("candidate progress context prefixes request and cache logs", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "steam-games-log-test-"));
+  const originalWrite = process.stderr.write;
+  let now = 1_000;
+  let logs = "";
+  try {
+    const config = makeRuntimeConfig();
+    config.progress = true;
+    config.verbose = true;
+    config.cache.enabled = true;
+    config.cache.directory = tempDir;
+    config.requestPacing.reviewSummaryDelayMs = 1_000;
+    config.logContext = {
+      candidateProgress: {
+        current: 3,
+        total: 7,
+      },
+    };
+
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      logs += String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+
+    const deps = {
+      fetch: async () =>
+        jsonResponse({
+          success: 1,
+          query_summary: {
+            total_reviews: 1,
+            total_positive: 1,
+            total_negative: 0,
+          },
+        }),
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+
+    await fetchReviewSummary(4822670, config, deps);
+    await fetchReviewSummary(4822671, config, deps);
+
+    assert.match(logs, /\[steam-games\] \[3\/7\] Cache miss for reviews:/);
+    assert.match(logs, /\[steam-games\] \[3\/7\] Fetching fresh reviews:/);
+    assert.match(logs, /\[steam-games\] \[3\/7\] HTTP GET .*appreviews\/4822670/);
+    assert.match(logs, /\[steam-games\] \[3\/7\] HTTP 200 .* for .*appreviews\/4822670/);
+    assert.match(logs, /\[steam-games\] \[3\/7\] Stored reviews cache file .* \(ttl 72h\)\./);
+    assert.match(logs, /\[steam-games\] \[3\/7\] Review summary loaded for 4822670: total=1, positive=1, negative=0\./);
+    assert.match(logs, /\[steam-games\] \[3\/7\] Waiting 1s before next fresh reviews request\./);
+  } finally {
+    process.stderr.write = originalWrite;
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("demo page availability uses the one-week demo page cache TTL", async () => {

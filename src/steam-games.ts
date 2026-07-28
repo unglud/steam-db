@@ -46,6 +46,14 @@ export type RuntimeConfig = {
   progress: boolean;
   verbose: boolean;
   cache: CacheConfig;
+  logContext?: LogContext;
+};
+
+export type LogContext = {
+  candidateProgress?: {
+    current: number;
+    total: number;
+  };
 };
 
 export type EditableFilters = {
@@ -351,15 +359,16 @@ export async function runSteamGames(
 
     const skippedCandidates: string[] = [];
     let processedCandidates = 0;
-    const games = await mapConcurrent(candidates, config.concurrency, async (candidate) => {
+    const games = await mapConcurrent(candidates, config.concurrency, async (candidate, index) => {
+      const candidateConfig = withCandidateLogContext(config, index + 1, candidates.length);
       try {
-        logVerbose(config, `Processing candidate ${candidateLabel(candidate)}.`);
-        const game = await enrichCandidate(candidate, config, deps);
+        logVerbose(candidateConfig, `Processing candidate ${candidateLabel(candidate)}.`);
+        const game = await enrichCandidate(candidate, candidateConfig, deps);
         if (game === null) {
-          logVerbose(config, `Candidate ${candidateLabel(candidate)} returned no appdetails data.`);
+          logVerbose(candidateConfig, `Candidate ${candidateLabel(candidate)} returned no appdetails data.`);
         } else {
           logVerbose(
-            config,
+            candidateConfig,
             `Candidate ${candidateLabel(candidate)} enriched as ${gameLabel(game)}; demo=${game.demoAvailable}; price=${game.price.finalFormatted ?? game.price.final ?? "n/a"} ${game.price.currency ?? ""}; positive=${game.reviews.positive}; totalReviews=${game.reviews.total}.`
           );
         }
@@ -367,15 +376,15 @@ export async function runSteamGames(
           const decision = filterGame(game, filters);
           if (decision.matched) {
             await outputWriter.write(`${JSON.stringify(serializeGame(game))}\n`);
-            logVerbose(config, `Wrote NDJSON game line for ${gameLabel(game)}.`);
+            logVerbose(candidateConfig, `Wrote NDJSON game line for ${gameLabel(game)}.`);
           } else {
-            logVerbose(config, `Skipped NDJSON game line for ${gameLabel(game)}: ${decision.reason}.`);
+            logVerbose(candidateConfig, `Skipped NDJSON game line for ${gameLabel(game)}: ${decision.reason}.`);
           }
         }
         return game;
       } catch (error) {
         const message = errorMessage(error).split("\n")[0];
-        logVerbose(config, `Candidate ${candidateLabel(candidate)} failed: ${message}`);
+        logVerbose(candidateConfig, `Candidate ${candidateLabel(candidate)} failed: ${message}`);
         skippedCandidates.push(`${candidate.appid}: ${message}`);
         return null;
       } finally {
@@ -1613,12 +1622,28 @@ function serializableOptions(config: RuntimeConfig) {
 
 function logProgress(config: RuntimeConfig, message: string): void {
   if (!config.progress) return;
-  process.stderr.write(`[steam-games] ${message}\n`);
+  process.stderr.write(`[steam-games] ${formatLogMessage(config, message)}\n`);
 }
 
 function logVerbose(config: RuntimeConfig, message: string): void {
   if (!config.verbose) return;
   logProgress(config, message);
+}
+
+function withCandidateLogContext(config: RuntimeConfig, current: number, total: number): RuntimeConfig {
+  return {
+    ...config,
+    logContext: {
+      ...config.logContext,
+      candidateProgress: { current, total },
+    },
+  };
+}
+
+function formatLogMessage(config: RuntimeConfig, message: string): string {
+  const progress = config.logContext?.candidateProgress;
+  if (!progress) return message;
+  return `[${progress.current}/${progress.total}] ${message}`;
 }
 
 function candidateLabel(candidate: Candidate): string {
