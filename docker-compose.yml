@@ -14,7 +14,15 @@ services:
       PORT: "3000"
     volumes:
       - steam-games-data:/data
+    networks:
+      - default
+      - changedetectionio
     restart: unless-stopped
 
 volumes:
   steam-games-data:
+
+networks:
+  changedetectionio:
+    external: true
+    name: changedetectionio_default

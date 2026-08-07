@@ -276,6 +276,10 @@ export type SteamGamesDependencies = {
   sleep: (ms: number) => Promise<void>;
 };
 
+export type DemoAvailabilityOptions = {
+  os?: PlatformName;
+};
+
 const USER_AGENT = "steam-db-ts-script/0.1 (+https://store.steampowered.com)";
 const SEARCH_PAGE_SIZE = 50;
 const requestQueues = new Map<RequestNamespace, Promise<void>>();
@@ -363,7 +367,7 @@ export async function runSteamGames(
       const candidateConfig = withCandidateLogContext(config, index + 1, candidates.length);
       try {
         logVerbose(candidateConfig, `Processing candidate ${candidateLabel(candidate)}.`);
-        const game = await enrichCandidate(candidate, candidateConfig, deps);
+        const game = await enrichCandidate(candidate, candidateConfig, deps, { os: filters.os });
         if (game === null) {
           logVerbose(candidateConfig, `Candidate ${candidateLabel(candidate)} returned no appdetails data.`);
         } else {
@@ -924,7 +928,8 @@ function extractAppId(logo: string): number | null {
 export async function enrichCandidate(
   candidate: Candidate,
   config: RuntimeConfig,
-  dependencies: Partial<SteamGamesDependencies> = {}
+  dependencies: Partial<SteamGamesDependencies> = {},
+  demoOptions: DemoAvailabilityOptions = {}
 ): Promise<GameResult | null> {
   const deps = resolveDependencies(dependencies);
   logVerbose(config, `Fetching app details and review summary for ${candidateLabel(candidate)}.`);
@@ -942,13 +947,9 @@ export async function enrichCandidate(
   const reviewTotal = reviews.total_reviews ?? 0;
   const positive = reviews.total_positive ?? 0;
   const negative = reviews.total_negative ?? 0;
-  const demoAvailable = await hasAvailableDemo(details, config, deps);
+  const demoAvailable = await hasAvailableDemo(details, config, deps, demoOptions);
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
-  const platforms = {
-    windows: details.platforms?.windows ?? false,
-    mac: details.platforms?.mac ?? false,
-    linux: details.platforms?.linux ?? false,
-  };
+  const platforms = normalizePlatforms(details.platforms);
   logVerbose(
     config,
     `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", demo=${demoAvailable}, discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}.`
@@ -992,9 +993,11 @@ export async function enrichCandidate(
 export async function hasAvailableDemo(
   details: StoreDetails,
   config: RuntimeConfig,
-  dependencies: Partial<SteamGamesDependencies> = {}
+  dependencies: Partial<SteamGamesDependencies> = {},
+  options: DemoAvailabilityOptions = {}
 ): Promise<boolean> {
   const deps = resolveDependencies(dependencies);
+  const requestedOs = options.os ?? "";
   const demos = (details.demos ?? [])
     .map((demo) => demo.appid)
     .filter((appid): appid is number => typeof appid === "number" && Number.isFinite(appid));
@@ -1006,6 +1009,23 @@ export async function hasAvailableDemo(
   logVerbose(config, `Checking ${demos.length} demo page(s) for ${details.steam_appid ?? details.name ?? "unknown app"}.`);
   for (const demoAppid of demos) {
     try {
+      if (requestedOs !== "") {
+        const demoDetails = await fetchAppDetails(demoAppid, config, deps);
+        if (!demoDetails) {
+          logVerbose(config, `Demo ${demoAppid} has no store details; treating as unavailable for ${requestedOs}.`);
+          continue;
+        }
+
+        const demoPlatforms = normalizePlatforms(demoDetails.platforms);
+        if (!platformsSupportOs(demoPlatforms, requestedOs)) {
+          logVerbose(
+            config,
+            `Demo ${demoAppid} does not support requested OS ${requestedOs}; platforms=${platformSummary(demoPlatforms)}.`
+          );
+          continue;
+        }
+      }
+
       if (await isDemoPageInstallable(demoAppid, config, deps)) {
         logVerbose(config, `Demo ${demoAppid} is installable.`);
         return true;
@@ -1652,6 +1672,29 @@ function candidateLabel(candidate: Candidate): string {
 
 function gameLabel(game: GameResult): string {
   return `${game.appid} (${game.name})`;
+}
+
+function normalizePlatforms(platforms: StoreDetails["platforms"] | undefined): {
+  windows: boolean;
+  mac: boolean;
+  linux: boolean;
+} {
+  return {
+    windows: platforms?.windows ?? false,
+    mac: platforms?.mac ?? false,
+    linux: platforms?.linux ?? false,
+  };
+}
+
+function platformsSupportOs(
+  platforms: { windows: boolean; mac: boolean; linux: boolean },
+  os: PlatformName
+): boolean {
+  if (os === "") return true;
+  if (os === "win") return platforms.windows;
+  if (os === "mac" || os === "applesilicon") return platforms.mac;
+  if (os === "linux") return platforms.linux;
+  return true;
 }
 
 function platformSummary(platforms: { windows: boolean; mac: boolean; linux: boolean }): string {

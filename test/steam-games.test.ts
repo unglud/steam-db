@@ -12,6 +12,7 @@ import {
   filterGame,
   fetchReviewSummary,
   getScriptConfig,
+  hasAvailableDemo,
   hasInstallLink,
   isDemoPageInstallable,
   normalizeFilters,
@@ -335,6 +336,47 @@ test("enrichCandidate verifies demo availability through the demo page", async (
 
   assert.equal(game?.demoAvailable, false);
   assert.equal(fetches.some((url) => url.includes("/app/666970/")), true);
+});
+
+test("hasAvailableDemo ignores demos that do not support the requested OS", async () => {
+  const config = makeRuntimeConfig();
+  const fetches: string[] = [];
+  const deps = {
+    fetch: async (input: string | URL) => {
+      const url = input.toString();
+      fetches.push(url);
+      const parsedUrl = new URL(url);
+      if (parsedUrl.pathname === "/api/appdetails" && parsedUrl.searchParams.get("appids") === "1368031") {
+        return jsonResponse({
+          "1368031": {
+            success: true,
+            data: {
+              steam_appid: 1368031,
+              name: "ANNO: Mutationem Demo",
+              platforms: { windows: true, mac: false, linux: false },
+            },
+          },
+        });
+      }
+      if (parsedUrl.pathname === "/app/1368031/") {
+        return textResponse('<a href="steam://install/1368031">Download Demo</a>');
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    },
+    now: () => 1_000,
+    sleep: async () => {},
+  };
+  const details = {
+    steam_appid: 1368030,
+    name: "ANNO: Mutationem",
+    demos: [{ appid: 1368031 }],
+  };
+
+  assert.equal(await hasAvailableDemo(details, config, deps, { os: "mac" }), false);
+  assert.equal(fetches.some((url) => url.includes("/app/1368031/")), false);
+
+  assert.equal(await hasAvailableDemo(details, config, deps, { os: "win" }), true);
+  assert.equal(fetches.some((url) => url.includes("/app/1368031/")), true);
 });
 
 test("candidate progress context prefixes request and cache logs", async () => {
