@@ -2,7 +2,7 @@ services:
   steam-games:
     build: .
     ports:
-      - "3000"
+      - "52689:3000"
     env_file:
       - path: .env
         required: false
@@ -11,7 +11,7 @@ services:
       STEAM_GAMES_OUTPUT_FILE: /data/steam-games.json
       STEAM_GAMES_CACHE_DIR: /data/.cache/steam
       STEAM_GAMES_INTERVAL_HOURS: "24"
-      STEAM_GAMES_RUN_ON_STARTUP: "1"
+      STEAM_GAMES_RUN_ON_STARTUP: "0"
       PORT: "3000"
     volumes:
       - steam-games-data:/data

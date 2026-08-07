@@ -145,7 +145,6 @@ Then start the server:
 
 ```sh
 docker compose up --build
-docker compose port steam-games 3000
 ```
 
 The container starts a small HTTP server. In Docker Compose it runs the Steam crawl on every container startup, then runs it every 24 hours.
@@ -153,7 +152,7 @@ The container starts a small HTTP server. In Docker Compose it runs the Steam cr
 - `GET /` or `GET /games`: latest result JSON
 - `GET /health`: scheduler status
 
-The compose file maps container port `3000` to a random host port. Use `docker compose port steam-games 3000` to see the actual URL.
+The compose file maps container port `3000` to fixed host port `52689`, so the host URL is `http://localhost:52689`.
 
 Docker stores results and cache in the `steam-games-data` volume under `/data`. The compose file intentionally overrides `STEAM_GAMES_OUTPUT_FILE` and `STEAM_GAMES_CACHE_DIR` to use that volume, even if `.env` has local CLI paths like `steam-games.json` or `.cache/steam`.
 
