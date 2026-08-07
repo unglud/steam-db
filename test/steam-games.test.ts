@@ -473,6 +473,7 @@ test("buildServerConfig applies Docker data defaults and environment overrides",
   const config = buildServerConfig({
     STEAM_GAMES_DOCKER: "1",
     STEAM_GAMES_INTERVAL_HOURS: "12",
+    STEAM_GAMES_RUN_ON_STARTUP: "true",
     PORT: "4567",
     HOST: "127.0.0.1",
   });
@@ -480,6 +481,7 @@ test("buildServerConfig applies Docker data defaults and environment overrides",
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 4567);
   assert.equal(config.intervalMs, 12 * 60 * 60 * 1000);
+  assert.equal(config.runOnStartup, true);
   assert.equal(config.scriptConfig.outputFile, "/data/steam-games.json");
   assert.equal(config.scriptConfig.cache.directory, "/data/.cache/steam");
 });
@@ -517,4 +519,5 @@ test("readLatestResultContent returns the latest JSON body", async () => {
 test("startup crawl only runs when no previous result exists", () => {
   assert.equal(shouldRunStartupCrawl(null), true);
   assert.equal(shouldRunStartupCrawl("/data/steam-games-2026-01-02T00-00-00-000Z.json"), false);
+  assert.equal(shouldRunStartupCrawl("/data/steam-games-2026-01-02T00-00-00-000Z.json", true), true);
 });

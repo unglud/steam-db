@@ -148,7 +148,7 @@ docker compose up --build
 docker compose port steam-games 3000
 ```
 
-The container starts a small HTTP server. It runs the Steam crawl on startup only when no previous result file exists, then runs it every 24 hours.
+The container starts a small HTTP server. In Docker Compose it runs the Steam crawl on every container startup, then runs it every 24 hours.
 
 - `GET /` or `GET /games`: latest result JSON
 - `GET /health`: scheduler status

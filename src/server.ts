@@ -27,6 +27,7 @@ type ServerConfig = {
   host: string;
   port: number;
   intervalMs: number;
+  runOnStartup: boolean;
   scriptConfig: ScriptConfig;
 };
 
@@ -51,6 +52,7 @@ export function buildServerConfig(env: Record<string, string | undefined> = proc
       60 *
       60 *
       1000,
+    runOnStartup: parseBoolean(env.STEAM_GAMES_RUN_ON_STARTUP, false, "STEAM_GAMES_RUN_ON_STARTUP"),
     scriptConfig,
   };
 }
@@ -99,8 +101,8 @@ export async function readLatestResultContent(
   };
 }
 
-export function shouldRunStartupCrawl(latestResultFile: string | null): boolean {
-  return latestResultFile === null;
+export function shouldRunStartupCrawl(latestResultFile: string | null, runOnStartup: boolean = false): boolean {
+  return runOnStartup || latestResultFile === null;
 }
 
 export async function startSchedulerServer(
@@ -158,7 +160,7 @@ export async function startSchedulerServer(
   const shownPort = typeof address === "object" && address !== null ? address.port : serverConfig.port;
   log(`Server listening on ${serverConfig.host}:${shownPort}.`);
 
-  if (shouldRunStartupCrawl(state.lastOutputFile)) {
+  if (shouldRunStartupCrawl(state.lastOutputFile, serverConfig.runOnStartup)) {
     void runOnce("startup");
   } else {
     log(`Skipping startup run because existing output was found: ${state.lastOutputFile}.`);
@@ -253,6 +255,14 @@ function parsePositiveNumber(value: string | undefined, fallback: number, name: 
     throw new Error(`${name} must be a positive number.`);
   }
   return parsed;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean, name: string): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`${name} must be true or false.`);
 }
 
 function matchesOutputFileName(fileName: string, baseName: string, ext: string): boolean {
