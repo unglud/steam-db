@@ -102,6 +102,7 @@ function makeGame(overrides = {}) {
         mac: true,
         linux: false,
       },
+      macosCatalinaIncompatible: false,
     },
   };
 
@@ -254,6 +255,24 @@ test("filterGame rejects ignored names and Early Access games", () => {
   );
 });
 
+test("filterGame rejects Catalina-incompatible games for macOS filters", () => {
+  const game = makeGame({
+    internal: {
+      macosCatalinaIncompatible: true,
+    },
+  });
+
+  assert.deepEqual(filterGame(game, normalizeFilters(makeFilterConfig({ os: "mac" }))), {
+    matched: false,
+    reason: "macOS 10.15 Catalina incompatible",
+  });
+  assert.deepEqual(filterGame(game, normalizeFilters(makeFilterConfig({ os: "applesilicon" }))), {
+    matched: false,
+    reason: "macOS 10.15 Catalina incompatible",
+  });
+  assert.equal(filterGame(game, normalizeFilters(makeFilterConfig({ os: "win" }))).matched, true);
+});
+
 test("demo_positive_desc sorts demo games first, then by positive reviews", () => {
   const games = [
     makeGame({ appid: 1, name: "Demo Low", demoAvailable: true, reviews: { positive: 800 } }),
@@ -336,6 +355,61 @@ test("enrichCandidate verifies demo availability through the demo page", async (
 
   assert.equal(game?.demoAvailable, false);
   assert.equal(fetches.some((url) => url.includes("/app/666970/")), true);
+});
+
+test("enrichCandidate records macOS Catalina incompatibility from app details", async () => {
+  const config = makeRuntimeConfig();
+  let appDetailsUrl: URL | null = null;
+  const fetch = async (input: string | URL) => {
+    const url = new URL(input.toString());
+    if (url.pathname === "/api/appdetails") {
+      appDetailsUrl = url;
+      return jsonResponse({
+        "12345": {
+          success: true,
+          data: {
+            steam_appid: 12345,
+            name: "Old Mac Game",
+            short_description: "Needs a legacy runtime.",
+            mac_requirements: {
+              minimum:
+                "<strong>Notice:</strong> This product is not compatible with macOS 10.15 Catalina or above.",
+            },
+            price_overview: {
+              currency: "MYR",
+              final: 1000,
+              discount_percent: 50,
+              final_formatted: "RM10.00",
+            },
+            platforms: { windows: true, mac: true, linux: false },
+            release_date: { date: "Jan 15, 2012" },
+            genres: [],
+          },
+        },
+      });
+    }
+    if (url.pathname === "/appreviews/12345") {
+      return jsonResponse({
+        success: 1,
+        query_summary: {
+          total_reviews: 1000,
+          total_positive: 900,
+          total_negative: 100,
+        },
+      });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  const game = await enrichCandidate({ appid: 12345 }, config, {
+    fetch,
+    now: () => 1_000,
+    sleep: async () => {},
+  });
+
+  assert.equal(appDetailsUrl?.searchParams.get("filters")?.includes("mac_requirements"), true);
+  assert.equal(game?.internal.macosCatalinaIncompatible, true);
+  assert.equal(filterGame(game!, normalizeFilters(makeFilterConfig({ os: "mac" }))).matched, false);
 });
 
 test("hasAvailableDemo ignores demos that do not support the requested OS", async () => {

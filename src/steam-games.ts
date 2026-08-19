@@ -150,6 +150,7 @@ export type StoreDetails = {
   steam_appid?: number;
   short_description?: string;
   price_overview?: PriceOverview;
+  mac_requirements?: SystemRequirements;
   platforms?: {
     windows?: boolean;
     mac?: boolean;
@@ -161,6 +162,11 @@ export type StoreDetails = {
   };
   demos?: Array<{ appid?: number; description?: string }>;
   genres?: Array<{ id?: string; description?: string }>;
+};
+
+export type SystemRequirements = {
+  minimum?: string;
+  recommended?: string;
 };
 
 export type AppDetailsResponse = Record<
@@ -242,6 +248,7 @@ export type GameResult = {
       mac: boolean;
       linux: boolean;
     };
+    macosCatalinaIncompatible: boolean;
   };
 };
 
@@ -287,6 +294,7 @@ const lastRequestAt = new Map<RequestNamespace, number>();
 const DETAIL_FILTERS = [
   "basic",
   "price_overview",
+  "mac_requirements",
   "release_date",
   "platforms",
   "demos",
@@ -950,9 +958,10 @@ export async function enrichCandidate(
   const demoAvailable = await hasAvailableDemo(details, config, deps, demoOptions);
   const releaseTime = parseSteamReleaseDate(details.release_date?.date ?? null);
   const platforms = normalizePlatforms(details.platforms);
+  const macosCatalinaIncompatible = hasMacOsCatalinaIncompatibility(details.mac_requirements);
   logVerbose(
     config,
-    `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", demo=${demoAvailable}, discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}.`
+    `Building result for ${details.steam_appid ?? candidate.appid}: release="${details.release_date?.date ?? "unknown"}", demo=${demoAvailable}, discount=${price?.discount_percent ?? 0}, reviews=${reviewTotal}, platforms=${platformSummary(platforms)}, macosCatalinaIncompatible=${macosCatalinaIncompatible}.`
   );
 
   return {
@@ -986,6 +995,7 @@ export async function enrichCandidate(
     internal: {
       releaseTimestamp: releaseTime,
       platforms,
+      macosCatalinaIncompatible,
     },
   };
 }
@@ -1492,6 +1502,9 @@ export function filterGame(game: GameResult, filters: Filters): FilterDecision {
   if ((filters.os === "mac" || filters.os === "applesilicon") && !game.internal.platforms.mac) {
     return { matched: false, reason: "missing macOS platform support" };
   }
+  if ((filters.os === "mac" || filters.os === "applesilicon") && game.internal.macosCatalinaIncompatible) {
+    return { matched: false, reason: "macOS 10.15 Catalina incompatible" };
+  }
   if (filters.os === "linux" && !game.internal.platforms.linux) {
     return { matched: false, reason: "missing Linux platform support" };
   }
@@ -1501,6 +1514,20 @@ export function filterGame(game: GameResult, filters: Filters): FilterDecision {
 
 function hasEarlyAccessGenre(game: GameResult): boolean {
   return game.genres.some((genre) => genre.id === "70" || genre.description?.toLowerCase() === "early access");
+}
+
+function hasMacOsCatalinaIncompatibility(requirements: SystemRequirements | undefined): boolean {
+  const text = normalizeRequirementText(`${requirements?.minimum ?? ""} ${requirements?.recommended ?? ""}`);
+  return /not compatible with mac\s*os 10\.15 catalina or (above|later)/i.test(text);
+}
+
+function normalizeRequirementText(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function hasInstallLink(html: string, appid: number): boolean {
