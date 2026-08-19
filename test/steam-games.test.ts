@@ -239,6 +239,16 @@ test("filterGame rejects ignored names and Early Access games", () => {
     matched: false,
     reason: 'ignored name "hades"',
   });
+  assert.deepEqual(
+    filterGame(
+      makeGame({ name: "Pathfinder: Wrath of the Righteous - Enhanced Edition" }),
+      normalizeFilters(makeFilterConfig({ ignoreNames: ["Pathfinder: Wrath of the Righteous"] }))
+    ),
+    {
+      matched: false,
+      reason: 'ignored name "Pathfinder: Wrath of the Righteous - Enhanced Edition"',
+    }
+  );
 
   const normalFilters = normalizeFilters(makeFilterConfig());
   assert.deepEqual(

@@ -1465,7 +1465,7 @@ function matchesFilters(game: GameResult, filters: Filters): boolean {
 }
 
 export function filterGame(game: GameResult, filters: Filters): FilterDecision {
-  if (filters.ignoreNameKeys.has(normalizeGameName(game.name))) {
+  if (findIgnoredNameMatch(game.name, filters.ignoreNameKeys) !== null) {
     return { matched: false, reason: `ignored name "${game.name}"` };
   }
   if (hasEarlyAccessGenre(game)) {
@@ -1536,6 +1536,14 @@ export function hasInstallLink(html: string, appid: number): boolean {
 
 function normalizeGameName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+function findIgnoredNameMatch(gameName: string, ignoreNameKeys: Set<string>): string | null {
+  const normalizedGameName = normalizeGameName(gameName);
+  for (const ignoreNameKey of ignoreNameKeys) {
+    if (normalizedGameName.includes(ignoreNameKey)) return ignoreNameKey;
+  }
+  return null;
 }
 
 export function compareGames(a: GameResult, b: GameResult, sort: SortKey): number {

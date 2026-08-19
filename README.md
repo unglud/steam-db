@@ -57,6 +57,8 @@ Common knobs:
 
 Supported OS values are `win`, `mac`, `linux`, `applesilicon`, and `all`. `applesilicon` maps to Steam's public `mac` search filter because the public Store endpoints do not expose a reliable Apple Silicon-native flag.
 
+`STEAM_FILTER_IGNORE_NAMES` entries are case-insensitive partial matches, so `Pathfinder: Wrath of the Righteous` also ignores `Pathfinder: Wrath of the Righteous - Enhanced Edition`.
+
 Supported sort values:
 
 - `discount_asc`
