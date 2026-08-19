@@ -300,6 +300,7 @@ const DETAIL_FILTERS = [
   "demos",
   "genres",
 ].join(",");
+const DEMO_PAGE_CACHE_VERSION = "playable-link-v2";
 
 const defaultDependencies: SteamGamesDependencies = {
   fetch: (input, init) => fetch(input, init),
@@ -1061,7 +1062,7 @@ export async function isDemoPageInstallable(
   return fetchCachedJson<boolean>(
     config,
     "demopage",
-    url.toString(),
+    `${DEMO_PAGE_CACHE_VERSION}:${url.toString()}`,
     hoursToMs(config.cache.demoPageTtlHours),
     async () => {
       const html = await fetchText(url, config, deps);
@@ -1531,7 +1532,11 @@ function normalizeRequirementText(value: string): string {
 }
 
 export function hasInstallLink(html: string, appid: number): boolean {
-  return html.includes(`steam://install/${appid}`) || new RegExp(`InstallGame\\(\\s*${appid}\\b`).test(html);
+  return (
+    html.includes(`steam://install/${appid}`) ||
+    html.includes(`steam://run/${appid}`) ||
+    new RegExp(`InstallGame\\(\\s*${appid}\\b`).test(html)
+  );
 }
 
 function normalizeGameName(name: string): string {

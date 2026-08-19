@@ -309,6 +309,7 @@ test("serializeGame keeps output compact", () => {
 
 test("hasInstallLink detects real demo install links", () => {
   assert.equal(hasInstallLink('<a href="steam://install/452280">Download Demo</a>', 452280), true);
+  assert.equal(hasInstallLink("javascript:ShowGotSteamModal('steam://run/1997180', 'dotAGE Demo')", 1997180), true);
   assert.equal(hasInstallLink("javascript:InstallGame( 452280, 'demo' )", 452280), true);
   assert.equal(hasInstallLink("<title>Site Error</title>", 666970), false);
 });
@@ -532,7 +533,7 @@ test("demo page availability uses the one-week demo page cache TTL", async () =>
     const deps = {
       fetch: async () => {
         fetchCount += 1;
-        return textResponse('<a href="steam://install/452280">Download Demo</a>');
+        return textResponse("javascript:ShowGotSteamModal('steam://run/452280', 'Demo')");
       },
       now: () => 1_000_000,
       sleep: async () => {},
@@ -546,6 +547,7 @@ test("demo page availability uses the one-week demo page cache TTL", async () =>
     assert.equal(cacheFiles.length, 1);
 
     const cacheEntry = JSON.parse(await readFile(join(tempDir, "demopage", cacheFiles[0]), "utf8"));
+    assert.equal(cacheEntry.key, "playable-link-v2:https://store.steampowered.com/app/452280/");
     assert.equal(cacheEntry.expiresAt - cacheEntry.createdAt, 168 * 60 * 60 * 1000);
     assert.equal(cacheEntry.data, true);
   } finally {
